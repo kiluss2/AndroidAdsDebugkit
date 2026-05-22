@@ -312,7 +312,7 @@ Recommended init logging:
 // DO NOT MODIFY external_debug Timber format unless maintaining AndroidAdsDebugKit parser.
 Timber.tag(AdsDebugLogFormat.Tag.EXTERNAL).d(
     "${AdsDebugLogFormat.EXTERNAL_MARKER} " +
-        "provider=meta event=init status=${AdsDebugLogFormat.Status.SUCCESS} " +
+        "provider=facebook event=init status=${AdsDebugLogFormat.Status.SUCCESS} " +
         "message=fully_initialized=true"
 )
 ```
@@ -320,7 +320,7 @@ Timber.tag(AdsDebugLogFormat.Tag.EXTERNAL).d(
 Recommended provider names:
 
 - `adjust`
-- `meta`
+- `facebook`
 - `tiktok`
 - `appsflyer`
 - `in_house`
