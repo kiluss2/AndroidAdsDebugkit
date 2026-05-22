@@ -40,7 +40,7 @@ Publish the library to your local Maven repository:
 ./gradlew publishToMavenLocal
 ```
 
-Then use the snapshot dependency from an app:
+Then use the local release dependency from an app:
 
 ```kotlin
 repositories {
@@ -49,7 +49,7 @@ repositories {
 }
 
 dependencies {
-    implementation("fxc.dev:android-ads-debug-kit:0.0.1-SNAPSHOT")
+    implementation("fxc.dev:android-ads-debug-kit:0.1.0")
 }
 ```
 
@@ -422,6 +422,40 @@ Consumer app checks:
 
 ```bash
 ./gradlew :app:compileDebugKotlin :app:minifyReleaseWithR8
+```
+
+## Publishing
+
+Maven Central releases use the Vanniktech Gradle Maven Publish plugin and Central Portal.
+
+Before publishing, make sure:
+
+- The Central Portal account has a verified namespace for `fxc.dev`.
+- A GPG signing key is available and its public key has been distributed.
+- Central Portal user tokens and signing credentials are configured outside the repository.
+
+Recommended local credentials in `~/.gradle/gradle.properties`:
+
+```properties
+mavenCentralUsername=<central-portal-token-username>
+mavenCentralPassword=<central-portal-token-password>
+signingInMemoryKey=<ascii-armored-private-gpg-key>
+signingInMemoryKeyPassword=<gpg-key-passphrase>
+```
+
+Use the manual release flow first:
+
+```bash
+./gradlew clean lintRelease publishToMavenCentral
+```
+
+Then open Central Portal deployments, inspect validation, and publish the deployment manually.
+
+After the release is validated, tag the same commit:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 ## License
