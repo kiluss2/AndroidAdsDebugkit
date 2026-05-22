@@ -30,6 +30,7 @@ object AdsDebugKit {
     private val lock = Any()
     private val events = mutableListOf<AdDebugEvent>()
     private val revenues = mutableListOf<AdDebugRevenueEvent>()
+    private val customEvents = mutableListOf<AdDebugCustomEvent>()
     private val debugLines = mutableListOf<String>()
     private val states = linkedMapOf<String, AdDebugState>()
     @Volatile
@@ -98,6 +99,16 @@ object AdsDebugKit {
         notifyChanged()
     }
 
+    internal fun logCustomEvent(event: AdDebugCustomEvent) {
+        if (!isDebugEnabled()) return
+        synchronized(lock) {
+            customEvents.add(0, event)
+            trim(customEvents)
+        }
+        if (settings.showToasts) showToast("Custom ${event.event}")
+        notifyChanged()
+    }
+
     internal fun logDebugLine(line: String) {
         logDebugLines(listOf(line))
     }
@@ -126,6 +137,8 @@ object AdsDebugKit {
     fun eventsSnapshot(): List<AdDebugEvent> = synchronized(lock) { events.toList() }
 
     fun revenuesSnapshot(): List<AdDebugRevenueEvent> = synchronized(lock) { revenues.toList() }
+
+    fun customEventsSnapshot(): List<AdDebugCustomEvent> = synchronized(lock) { customEvents.toList() }
 
     fun debugLinesSnapshot(): List<String> = synchronized(lock) { debugLines.toList() }
 
@@ -161,6 +174,7 @@ object AdsDebugKit {
         synchronized(lock) {
             events.clear()
             revenues.clear()
+            customEvents.clear()
             debugLines.clear()
             states.clear()
         }

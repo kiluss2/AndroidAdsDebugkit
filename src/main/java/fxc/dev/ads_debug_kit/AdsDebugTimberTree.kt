@@ -16,6 +16,7 @@ internal object AdsDebugTimberTree {
             }
             parseStructuredEvent(tag, message)?.let(AdsDebugKit::log)
             parseStructuredRevenue(tag, message)?.let(AdsDebugKit::logRevenue)
+            parseStructuredCustomEvent(tag, message)?.let(AdsDebugKit::logCustomEvent)
 
             if (config.mirrorTimberLogsToLogcat) {
                 Log.println(priority, tag ?: DEFAULT_TAG, message)
@@ -77,6 +78,23 @@ internal object AdsDebugTimberTree {
         )
     }
 
+    private fun parseStructuredCustomEvent(tag: String?, message: String): AdDebugCustomEvent? {
+        if (tag != AdsDebugLogFormat.Tag.CUSTOM) return null
+        val values = message.parseKeyValues()
+        if (values[CUSTOM_FORMAT_KEY] != FORMAT_VERSION) return null
+        val event = values[AdsDebugLogFormat.Key.EVENT] ?: return null
+        return AdDebugCustomEvent(
+            event = event,
+            status = values[AdsDebugLogFormat.Key.STATUS],
+            message = values[AdsDebugLogFormat.Key.MESSAGE]
+                ?: values[AdsDebugLogFormat.Key.REASON]
+                ?: values[AdsDebugLogFormat.Key.CODE],
+            values = values
+                .filterKeys { key -> key != CUSTOM_FORMAT_KEY }
+                .toSortedMap()
+        )
+    }
+
     private fun String.parseKeyValues(): Map<String, String> {
         return KEY_VALUE_REGEX.findAll(this)
             .associate { match -> match.groupValues[1] to match.groupValues[2] }
@@ -131,6 +149,7 @@ internal object AdsDebugTimberTree {
     private const val DEFAULT_TAG = "AdsDebugKit"
     private const val ADS_DEBUG_FLOW_SUFFIX = "DebugFlow"
     private const val FORMAT_KEY = "ads_debug"
+    private const val CUSTOM_FORMAT_KEY = "custom_debug"
     private const val FORMAT_VERSION = "1"
     private val KEY_VALUE_REGEX = Regex("""([A-Za-z][A-Za-z0-9_]*)=(.*?)(?=\s+[A-Za-z][A-Za-z0-9_]*=|$)""")
 }

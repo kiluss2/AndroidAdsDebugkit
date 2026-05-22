@@ -10,6 +10,7 @@ It is designed for production QA flows where testers need to enable a hidden deb
 - Floating near-fullscreen debug sheet that survives Activity navigation.
 - Ad state dashboard for real GMA ads: load, show/impression, revenue.
 - External tracking log tab for Adjust, Meta/Facebook, TikTok, AppsFlyer, and similar SDK logs.
+- Custom event tab for app-defined QA/debug events.
 - Runtime ad unit override modes: normal, fail primary, fail all, force AdMob-only, custom per placement.
 - Automatic ad unit discovery from `R.string` resources matching `ads_*_id`.
 - Structured Timber parser for ads and external logs.
@@ -302,6 +303,30 @@ Supported status values:
 - `skipped`
 
 DebugKit also taps filtered logcat lines for selected SDK outputs such as Adjust response strings and Meta/Facebook flush results while debug mode is enabled.
+
+## Custom Debug Events
+
+Use custom events for app-specific QA signals that should not be mixed into ad states or external SDK tracking.
+
+Format:
+
+```text
+custom_debug=1 event=<event> status=<optional> message=<optional>
+```
+
+Example:
+
+```kotlin
+// DO NOT MODIFY custom_debug Timber format unless maintaining AndroidAdsDebugKit parser.
+Timber.tag(AdsDebugLogFormat.Tag.CUSTOM).d(
+    "${AdsDebugLogFormat.CUSTOM_MARKER} " +
+        "event=paywall_opened " +
+        "status=${AdsDebugLogFormat.Status.SUCCESS} " +
+        "message=onboarding"
+)
+```
+
+The `Custom` tab shows only entries emitted with `custom_debug=1` and `AdsDebugLogFormat.Tag.CUSTOM`.
 
 ## Configuration
 

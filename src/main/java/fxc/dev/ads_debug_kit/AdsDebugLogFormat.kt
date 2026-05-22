@@ -3,6 +3,7 @@ package fxc.dev.ads_debug_kit
 object AdsDebugLogFormat {
     const val MARKER = "ads_debug=1"
     const val EXTERNAL_MARKER = "external_debug=1"
+    const val CUSTOM_MARKER = "custom_debug=1"
 
     object Tag {
         const val NATIVE = "NativeAdsDebugFlow"
@@ -12,6 +13,7 @@ object AdsDebugLogFormat {
         const val BANNER = "BannerAdsDebugFlow"
         const val REVENUE = "AdsRevenueDebugFlow"
         const val EXTERNAL = "AdsExternalDebugFlow"
+        const val CUSTOM = "AdsCustomDebugFlow"
         const val INIT = "AdsInitDebugFlow"
         const val LIFECYCLE = "AdsLifecycleDebugFlow"
     }

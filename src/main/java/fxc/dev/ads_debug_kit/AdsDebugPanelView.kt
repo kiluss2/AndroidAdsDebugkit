@@ -173,6 +173,7 @@ internal class AdsDebugPanelView(
             Tab.SETTINGS -> renderSettings()
             Tab.AD_UNITS -> renderAdUnits()
             Tab.LOGS -> renderLogs()
+            Tab.CUSTOM -> renderCustomEvents()
         }
     }
 
@@ -305,6 +306,16 @@ internal class AdsDebugPanelView(
             return
         }
         lines.forEach { line -> addMonoText(line, line.externalStatusColor()) }
+    }
+
+    private fun renderCustomEvents() {
+        val events = AdsDebugKit.customEventsSnapshot()
+        addSectionTitle("Custom (${events.size})")
+        if (events.isEmpty()) {
+            addEmpty("No custom events yet.")
+            return
+        }
+        events.forEach(::addCustomEventCard)
     }
 
     private fun showKeepEventsEditor() {
@@ -718,6 +729,52 @@ internal class AdsDebugPanelView(
         )
     }
 
+    private fun addCustomEventCard(event: AdDebugCustomEvent) {
+        val statusColor = event.status.customStatusColor()
+        val lines = buildList {
+            event.status?.let { add("status=$it") }
+            event.message?.let { add("message=$it") }
+            event.values
+                .filterKeys { key ->
+                    key != AdsDebugLogFormat.Key.EVENT &&
+                            key != AdsDebugLogFormat.Key.STATUS &&
+                            key != AdsDebugLogFormat.Key.MESSAGE
+                }
+                .forEach { (key, value) -> add("$key=$value") }
+        }
+        val card = LinearLayout(context).apply {
+            orientation = VERTICAL
+            setBackgroundColor(COLOR_CARD)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+        }
+        card.addView(
+            TextView(context).apply {
+                text = "${formatTime(event.timestampMs)}  ${event.event}"
+                setTextColor(statusColor)
+                textSize = 14f
+                setTypeface(typeface, Typeface.BOLD)
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+            }
+        )
+        lines.forEach { line ->
+            card.addView(
+                TextView(context).apply {
+                    text = line
+                    setTextColor(COLOR_TEXT_SECONDARY)
+                    textSize = 12f
+                    setPadding(0, dp(3), 0, 0)
+                }
+            )
+        }
+        content.addView(
+            card,
+            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dp(8)
+            }
+        )
+    }
+
     private fun addMonoText(text: String, color: Int = COLOR_TEXT_SECONDARY) {
         content.addView(
             TextView(context).apply {
@@ -883,12 +940,23 @@ internal class AdsDebugPanelView(
         }
     }
 
+    private fun String?.customStatusColor(): Int {
+        return when {
+            equals(AdsDebugLogFormat.Status.SUCCESS, ignoreCase = true) -> COLOR_STATUS_SUCCESS
+            equals(AdsDebugLogFormat.Status.FAILED, ignoreCase = true) -> COLOR_STATUS_FAILED
+            equals(AdsDebugLogFormat.Status.SUBMITTED, ignoreCase = true) ||
+                    equals(AdsDebugLogFormat.Status.LOADING, ignoreCase = true) -> COLOR_STATUS_LOADING
+            else -> COLOR_TEXT_PRIMARY
+        }
+    }
+
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private enum class Tab(val title: String) {
         STATES("Ad States"),
         EVENTS("Ad Events"),
         LOGS("Externals"),
+        CUSTOM("Custom"),
         SETTINGS("Settings"),
         AD_UNITS("Ad Units")
     }

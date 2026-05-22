@@ -202,6 +202,7 @@ internal object ExternalLogTap {
         AdsDebugLogFormat.Tag.BANNER,
         AdsDebugLogFormat.Tag.REVENUE,
         AdsDebugLogFormat.Tag.EXTERNAL,
+        AdsDebugLogFormat.Tag.CUSTOM,
         AdsDebugLogFormat.Tag.INIT,
         AdsDebugLogFormat.Tag.LIFECYCLE
     )

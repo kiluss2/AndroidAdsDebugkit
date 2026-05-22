@@ -83,6 +83,7 @@ data class AdDebugConfig(
         AdsDebugLogFormat.Tag.BANNER,
         AdsDebugLogFormat.Tag.REVENUE,
         AdsDebugLogFormat.Tag.EXTERNAL,
+        AdsDebugLogFormat.Tag.CUSTOM,
         AdsDebugLogFormat.Tag.INIT,
         AdsDebugLogFormat.Tag.LIFECYCLE
     ),
@@ -119,6 +120,14 @@ data class AdDebugRevenueEvent(
     val valueMicros: Long,
     val currencyCode: String,
     val precision: String? = null,
+    val timestampMs: Long = System.currentTimeMillis()
+)
+
+data class AdDebugCustomEvent(
+    val event: String,
+    val status: String? = null,
+    val message: String? = null,
+    val values: Map<String, String> = emptyMap(),
     val timestampMs: Long = System.currentTimeMillis()
 )
 
