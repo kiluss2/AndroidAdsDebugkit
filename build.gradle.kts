@@ -50,12 +50,17 @@ publishing {
             pom {
                 name.set("AndroidAdsDebugKit")
                 description.set("Android in-app ads debug overlay with hidden unlock gesture, shake toggle, ad events, revenue logs, and runtime ad id override modes.")
-                url.set("https://github.com/fox-code/AndroidAdsDebugKit")
+                url.set("https://github.com/kiluss2/AndroidAdsDebugkit")
                 licenses {
                     license {
                         name.set("MIT License")
                         url.set("https://opensource.org/licenses/MIT")
                     }
+                }
+                scm {
+                    url.set("https://github.com/kiluss2/AndroidAdsDebugkit")
+                    connection.set("scm:git:https://github.com/kiluss2/AndroidAdsDebugkit.git")
+                    developerConnection.set("scm:git:ssh://git@github.com/kiluss2/AndroidAdsDebugkit.git")
                 }
             }
         }
