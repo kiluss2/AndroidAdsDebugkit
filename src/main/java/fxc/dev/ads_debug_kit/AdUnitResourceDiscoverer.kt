@@ -8,7 +8,17 @@ internal object AdUnitResourceDiscoverer {
         if (!config.autoDiscoverAdUnits) return emptyList()
 
         val adUnits = linkedMapOf<String, AdDebugAdUnit>()
-        resourceClassNames(context, config).forEach { className ->
+        baseResourceClassNames(context, config).forEach { className ->
+            runCatching { Class.forName(className) }
+                .getOrNull()
+                ?.readAdUnits(context, config)
+                ?.forEach { adUnit -> adUnits[adUnit.name] = adUnit }
+        }
+        if (adUnits.isNotEmpty() || !config.enableDexResourceScan) {
+            return adUnits.values.sortedByResourceOrder()
+        }
+
+        dexStringResourceClassNames(context).forEach { className ->
             runCatching { Class.forName(className) }
                 .getOrNull()
                 ?.readAdUnits(context, config)
@@ -43,7 +53,7 @@ internal object AdUnitResourceDiscoverer {
             .toList()
     }
 
-    private fun resourceClassNames(context: Context, config: AdDebugConfig): List<String> {
+    private fun baseResourceClassNames(context: Context, config: AdDebugConfig): List<String> {
         val classNames = linkedSetOf<String>()
         classNames += config.resourceClassNames
         classNames += "${context.packageName}.R\$string"
@@ -54,7 +64,6 @@ internal object AdUnitResourceDiscoverer {
             ?.takeIf { it.isNotBlank() }
             ?.let { applicationClassPackage -> classNames += "$applicationClassPackage.R\$string" }
 
-        classNames += dexStringResourceClassNames(context)
         return classNames.toList()
     }
 

@@ -35,7 +35,7 @@ internal class AdsDebugPanelView(
     private val timeFormatter = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
     private val renderRunnable = Runnable {
         isRenderPending = false
-        render()
+        renderContent()
     }
     private val content = LinearLayout(context).apply {
         orientation = VERTICAL
@@ -54,7 +54,8 @@ internal class AdsDebugPanelView(
         orientation = VERTICAL
         setBackgroundColor(COLOR_BACKGROUND)
         buildLayout()
-        render()
+        renderTabs()
+        renderContent()
     }
 
     override fun onAttachedToWindow() {
@@ -81,18 +82,22 @@ internal class AdsDebugPanelView(
         val frame = FrameLayout(context).apply {
             setBackgroundColor(COLOR_BACKGROUND)
         }
-        frame.addView(
-            ImageView(context).apply {
-                setImageResource(R.drawable.ads_debug_background)
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                alpha = BACKGROUND_GIF_ALPHA
-                backgroundImageView = this
-            },
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        )
+        AdsDebugKit.currentConfig().backgroundDrawableResId
+            .takeIf { it != 0 }
+            ?.let { backgroundResId ->
+                frame.addView(
+                    ImageView(context).apply {
+                        setImageResource(backgroundResId)
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        alpha = BACKGROUND_GIF_ALPHA
+                        backgroundImageView = this
+                    },
+                    FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    )
+                )
+            }
 
         panelContent.addView(
             LinearLayout(context).apply {
@@ -160,8 +165,7 @@ internal class AdsDebugPanelView(
         }
     }
 
-    private fun render() {
-        renderTabs()
+    private fun renderContent() {
         content.removeAllViews()
         when (selectedTab) {
             Tab.EVENTS -> renderEvents()
@@ -194,7 +198,8 @@ internal class AdsDebugPanelView(
                     isFocusable = true
                     setOnClickListener {
                         selectedTab = tab
-                        render()
+                        renderTabs()
+                        renderContent()
                     }
                 },
                 LayoutParams(LayoutParams.WRAP_CONTENT, dp(42)).apply {

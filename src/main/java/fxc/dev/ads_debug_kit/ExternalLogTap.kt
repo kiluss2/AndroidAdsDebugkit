@@ -10,6 +10,7 @@ internal object ExternalLogTap {
 
     private val isStarted = AtomicBoolean(false)
     private var logcatProcess: java.lang.Process? = null
+    private var logcatReader: BufferedReader? = null
     private var readerThread: Thread? = null
 
     fun start() {
@@ -27,6 +28,7 @@ internal object ExternalLogTap {
                 )
                 logcatProcess = process
                 BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
+                    logcatReader = reader
                     val batch = mutableListOf<String>()
                     while (isStarted.get()) {
                         val line = reader.readLine() ?: break
@@ -51,7 +53,8 @@ internal object ExternalLogTap {
                 }
             } finally {
                 isStarted.set(false)
-                logcatProcess?.destroy()
+                logcatReader = null
+                logcatProcess?.closeAndDestroy()
                 logcatProcess = null
             }
         }, "AdsDebugKit-LogcatTap").apply {
@@ -62,10 +65,19 @@ internal object ExternalLogTap {
 
     fun stop() {
         if (!isStarted.compareAndSet(true, false)) return
-        logcatProcess?.destroy()
+        runCatching { logcatReader?.close() }
+        logcatReader = null
+        logcatProcess?.closeAndDestroy()
         logcatProcess = null
         readerThread?.interrupt()
         readerThread = null
+    }
+
+    private fun java.lang.Process.closeAndDestroy() {
+        runCatching { inputStream.close() }
+        runCatching { errorStream.close() }
+        runCatching { outputStream.close() }
+        destroy()
     }
 
     private fun String.isAdsDebugFlowLine(): Boolean {

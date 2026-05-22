@@ -22,15 +22,23 @@ object AdsDebugKit {
     private lateinit var appContext: Context
     private lateinit var prefs: AdsDebugPrefs
 
+    @Volatile
     private var config = AdDebugConfig()
+
+    @Volatile
     private var settingsCache = AdDebugSettings()
     private val lock = Any()
     private val events = mutableListOf<AdDebugEvent>()
     private val revenues = mutableListOf<AdDebugRevenueEvent>()
     private val debugLines = mutableListOf<String>()
     private val states = linkedMapOf<String, AdDebugState>()
+    @Volatile
     private var discoveredAdUnits: List<AdDebugAdUnit> = emptyList()
+
+    @Volatile
     private var adUnitCache = AdUnitCache()
+
+    @Volatile
     private var isAdUnitCacheInitialized = false
 
     fun initialize(context: Context, config: AdDebugConfig = AdDebugConfig()) {
@@ -123,27 +131,9 @@ object AdsDebugKit {
 
     fun statesSnapshot(): List<AdDebugState> = synchronized(lock) {
         val adUnitPlacements = allAdUnits().mapTo(linkedSetOf()) { it.name }
-        adUnitCache.units.forEach { adUnit ->
-            if (states[adUnit.name] == null) {
-                states[adUnit.name] = AdDebugState(
-                    placement = adUnit.name,
-                    unit = adUnit.unit,
-                    adUnitId = adUnit.adUnitId,
-                    loadState = AdDebugLoadState.NOT_LOADED,
-                    showState = AdDebugShowState.NOT_SHOWN,
-                    lastAction = AdDebugAction.DEBUG,
-                    network = null,
-                    message = null,
-                    successCount = 0,
-                    failedCount = 0,
-                    showedCount = 0,
-                    revenueMicros = 0L,
-                    currencyCode = null,
-                    updatedAtMs = 0L
-                )
-            }
+        val orderedStates = adUnitCache.units.map { adUnit ->
+            states[adUnit.name] ?: adUnit.toDefaultState()
         }
-        val orderedStates = adUnitCache.units.mapNotNull { states[it.name] }
         val extraStates = states.values.filter { state ->
             state.placement !in adUnitPlacements && state.adUnitId.hasKnownAdUnitId()
         }
@@ -331,6 +321,7 @@ object AdsDebugKit {
     }
 
     internal fun notifyChanged() {
+        if (listeners.isEmpty()) return
         mainHandler.removeCallbacks(notifyRunnable)
         mainHandler.post(notifyRunnable)
     }
@@ -611,6 +602,25 @@ object AdsDebugKit {
         while (list.size > keepEvents) {
             list.removeAt(list.lastIndex)
         }
+    }
+
+    private fun AdDebugAdUnit.toDefaultState(): AdDebugState {
+        return AdDebugState(
+            placement = name,
+            unit = unit,
+            adUnitId = adUnitId,
+            loadState = AdDebugLoadState.NOT_LOADED,
+            showState = AdDebugShowState.NOT_SHOWN,
+            lastAction = AdDebugAction.DEBUG,
+            network = null,
+            message = null,
+            successCount = 0,
+            failedCount = 0,
+            showedCount = 0,
+            revenueMicros = 0L,
+            currencyCode = null,
+            updatedAtMs = 0L
+        )
     }
 
     private data class AdUnitCache(

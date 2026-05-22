@@ -69,6 +69,7 @@ data class AdDebugAdUnit(
 data class AdDebugConfig(
     val allAdUnits: () -> List<AdDebugAdUnit> = { emptyList() },
     val autoDiscoverAdUnits: Boolean = true,
+    val enableDexResourceScan: Boolean = true,
     val resourceClassNames: List<String> = emptyList(),
     val adUnitResourcePrefix: String = "ads_",
     val adUnitResourceSuffix: String = "_id",
@@ -85,7 +86,8 @@ data class AdDebugConfig(
         AdsDebugLogFormat.Tag.INIT,
         AdsDebugLogFormat.Tag.LIFECYCLE
     ),
-    val invalidAdUnitId: String = "ca-app-pub-3940256099942544/0000000000"
+    val invalidAdUnitId: String = "ca-app-pub-3940256099942544/0000000000",
+    val backgroundDrawableResId: Int = R.drawable.ads_debug_background
 )
 
 data class AdDebugSettings(
