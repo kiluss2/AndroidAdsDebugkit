@@ -304,6 +304,36 @@ Supported status values:
 
 DebugKit also taps filtered logcat lines for selected SDK outputs such as Adjust response strings and Meta/Facebook flush results while debug mode is enabled.
 
+For reliable provider status, emit `external_debug=1` directly from the app tracking layer at the point each SDK is initialized or receives a callback. Do not rely only on SDK logcat output because some SDKs, especially Meta/Facebook, do not expose a stable init-success log line.
+
+Recommended init logging:
+
+```kotlin
+// DO NOT MODIFY external_debug Timber format unless maintaining AndroidAdsDebugKit parser.
+Timber.tag(AdsDebugLogFormat.Tag.EXTERNAL).d(
+    "${AdsDebugLogFormat.EXTERNAL_MARKER} " +
+        "provider=meta event=init status=${AdsDebugLogFormat.Status.SUCCESS} " +
+        "message=fully_initialized=true"
+)
+```
+
+Recommended provider names:
+
+- `adjust`
+- `meta`
+- `tiktok`
+- `appsflyer`
+- `in_house`
+
+Recommended event names:
+
+- `init`
+- `purchase`
+- `ad_revenue`
+- `custom`
+
+For SDKs with real callbacks, log `success` or `failed` from the callback. For SDKs with no reliable init callback, log the best observable local state, such as `FacebookSdk.isInitialized()` / `FacebookSdk.isFullyInitialized()`, then rely on flush or response logs for server-side success or failure.
+
 ## Custom Debug Events
 
 Use custom events for app-specific QA signals that should not be mixed into ad states or external SDK tracking.
