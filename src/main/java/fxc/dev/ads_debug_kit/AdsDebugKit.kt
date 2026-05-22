@@ -224,7 +224,10 @@ object AdsDebugKit {
             )
         }
         if (resolved != primaryAdUnitId || role == AdIdRequestRole.ADMOB_ONLY) {
-            logDebugLine("AdIdResolver placement=$placement mode=${settings.adIdOverrideMode} role=$role resolved=$resolved")
+            logAdIdDebugEvent(
+                placement = placement,
+                message = "AdIdResolver mode=${settings.adIdOverrideMode} role=$role resolved=$resolved"
+            )
         }
         return resolved
     }
@@ -232,7 +235,10 @@ object AdsDebugKit {
     fun setCustomAdUnitMode(placement: String, mode: AdUnitCustomMode) {
         ensureInitialized()
         if (!isOverridablePlacement(placement)) {
-            logDebugLine("AdIdCustomMode placement=$placement skipped=read_only")
+            logAdIdDebugEvent(
+                placement = placement,
+                message = "AdIdCustomMode skipped=read_only"
+            )
             return
         }
         val currentSettings = settings
@@ -250,7 +256,10 @@ object AdsDebugKit {
             adIdOverrideMode = if (allRelease) AdIdOverrideMode.NORMAL else AdIdOverrideMode.CUSTOM,
             customAdUnitModes = if (allRelease) emptyMap() else currentModes
         )
-        logDebugLine("AdIdCustomMode placement=$placement mode=$mode")
+        logAdIdDebugEvent(
+            placement = placement,
+            message = "AdIdCustomMode mode=$mode"
+        )
     }
 
     fun customAdUnitMode(placement: String): AdUnitCustomMode {
@@ -557,6 +566,18 @@ object AdsDebugKit {
             failedCount = currentState.failedCount + if (event.action == AdDebugAction.LOAD_FAIL) 1 else 0,
             showedCount = currentState.showedCount + if (event.shouldIncreaseShowCount()) 1 else 0,
             updatedAtMs = event.timestampMs
+        )
+    }
+
+    private fun logAdIdDebugEvent(placement: String, message: String) {
+        log(
+            AdDebugEvent(
+                unit = adUnitCache.byPlacement[placement]?.unit ?: AdDebugUnit.OTHER,
+                action = AdDebugAction.DEBUG,
+                placement = placement,
+                adUnitId = adUnitCache.byPlacement[placement]?.adUnitId,
+                message = message
+            )
         )
     }
 
