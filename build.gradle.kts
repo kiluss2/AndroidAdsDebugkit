@@ -1,6 +1,7 @@
 import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
 import com.vanniktech.maven.publish.JavadocJar
 import com.vanniktech.maven.publish.SourcesJar
+import org.gradle.plugins.signing.SigningExtension
 
 plugins {
     id("com.android.library") version "8.13.2"
@@ -82,5 +83,17 @@ mavenPublishing {
 
 fun Project.hasSigningConfig(): Boolean {
     return hasProperty("signingInMemoryKey") ||
+            hasProperty("signingInMemoryKeyFile") ||
             hasProperty("signing.secretKeyRingFile")
+}
+
+extensions.configure<SigningExtension> {
+    val signingKeyFile = providers.gradleProperty("signingInMemoryKeyFile")
+    val signingKey = providers.gradleProperty("signingInMemoryKey")
+        .orElse(signingKeyFile.map { file(it).readText() })
+    val signingPassword = providers.gradleProperty("signingInMemoryKeyPassword")
+
+    if (signingKey.isPresent) {
+        useInMemoryPgpKeys(signingKey.get(), signingPassword.orNull)
+    }
 }
