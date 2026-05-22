@@ -28,7 +28,7 @@ repositories {
 }
 
 dependencies {
-    implementation("fxc.dev:android-ads-debug-kit:0.1.0")
+    implementation("io.github.kiluss2:android-ads-debug-kit:0.1.0")
 }
 ```
 
@@ -49,7 +49,7 @@ repositories {
 }
 
 dependencies {
-    implementation("fxc.dev:android-ads-debug-kit:0.1.0")
+    implementation("io.github.kiluss2:android-ads-debug-kit:0.1.0")
 }
 ```
 
@@ -430,7 +430,7 @@ Maven Central releases use the Vanniktech Gradle Maven Publish plugin and Centra
 
 Before publishing, make sure:
 
-- The Central Portal account has a verified namespace for `fxc.dev`.
+- The Central Portal account has a verified namespace for `io.github.kiluss2`.
 - A GPG signing key is available and its public key has been distributed.
 - Central Portal user tokens and signing credentials are configured outside the repository.
 

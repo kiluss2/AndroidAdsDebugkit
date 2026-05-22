@@ -8,7 +8,7 @@ plugins {
     id("com.vanniktech.maven.publish") version "0.36.0"
 }
 
-group = "fxc.dev"
+group = "io.github.kiluss2"
 version = "0.1.0"
 
 android {
@@ -48,7 +48,7 @@ mavenPublishing {
     }
 
     coordinates(
-        groupId = "fxc.dev",
+        groupId = "io.github.kiluss2",
         artifactId = "android-ads-debug-kit",
         version = project.version.toString()
     )
