@@ -1,5 +1,8 @@
 # AndroidAdsDebugKit
 
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.kiluss2/android-ads-debug-kit.svg)](https://central.sonatype.com/artifact/io.github.kiluss2/android-ads-debug-kit)
+[![GitHub Release](https://img.shields.io/github/v/release/kiluss2/AndroidAdsDebugkit)](https://github.com/kiluss2/AndroidAdsDebugkit/releases)
+
 AndroidAdsDebugKit is an in-app debug panel for inspecting ads, ad revenue, external tracking logs, and runtime ad unit overrides in debug or release builds.
 
 It is designed for production QA flows where testers need to enable a hidden debug panel from inside the app, inspect real ad states, force ad-load failures, test AdMob-only fallback, and verify external SDK tracking without rebuilding the app.
@@ -9,7 +12,7 @@ It is designed for production QA flows where testers need to enable a hidden deb
 - Hidden unlock gesture for release builds.
 - Floating near-fullscreen debug sheet that survives Activity navigation.
 - Ad state dashboard for real GMA ads: load, show/impression, revenue.
-- External tracking log tab for Adjust, Meta/Facebook, TikTok, AppsFlyer, and similar SDK logs.
+- External tracking log tab for Adjust, Facebook, TikTok, AppsFlyer, and similar SDK logs.
 - Custom event tab for app-defined QA/debug events.
 - Runtime ad unit override modes: normal, fail primary, fail all, force AdMob-only, custom per placement.
 - Automatic ad unit discovery from `R.string` resources matching `ads_*_id`.
@@ -20,7 +23,7 @@ It is designed for production QA flows where testers need to enable a hidden deb
 
 ### Maven Central
 
-After the first public release:
+Available on Maven Central:
 
 ```kotlin
 repositories {
@@ -32,15 +35,17 @@ dependencies {
 }
 ```
 
+Apps that emit structured DebugKit logs from app code should also depend on Timber, or route the same messages through an existing Timber-compatible logging layer.
+
 ### Local Development
 
-Publish the library to your local Maven repository:
+For local library development, publish the current checkout to your local Maven repository:
 
 ```bash
 ./gradlew publishToMavenLocal
 ```
 
-Then use the local release dependency from an app:
+Then put `mavenLocal()` before `mavenCentral()` in the consumer app while testing local changes:
 
 ```kotlin
 repositories {
@@ -52,6 +57,8 @@ dependencies {
     implementation("io.github.kiluss2:android-ads-debug-kit:0.1.0")
 }
 ```
+
+Remove `mavenLocal()` again before committing app changes that should consume the public Maven Central artifact.
 
 ## Quick Start
 
@@ -302,9 +309,9 @@ Supported status values:
 - `failed`
 - `skipped`
 
-DebugKit also taps filtered logcat lines for selected SDK outputs such as Adjust response strings and Meta/Facebook flush results while debug mode is enabled.
+DebugKit also taps filtered logcat lines for selected SDK outputs such as Adjust response strings and Facebook flush results while debug mode is enabled.
 
-For reliable provider status, emit `external_debug=1` directly from the app tracking layer at the point each SDK is initialized or receives a callback. Do not rely only on SDK logcat output because some SDKs, especially Meta/Facebook, do not expose a stable init-success log line.
+For reliable provider status, emit `external_debug=1` directly from the app tracking layer at the point each SDK is initialized or receives a callback. Do not rely only on SDK logcat output because some SDKs, especially Facebook, do not expose a stable init-success log line.
 
 Recommended init logging:
 
@@ -333,6 +340,56 @@ Recommended event names:
 - `custom`
 
 For SDKs with real callbacks, log `success` or `failed` from the callback. For SDKs with no reliable init callback, log the best observable local state, such as `FacebookSdk.isInitialized()` / `FacebookSdk.isFullyInitialized()`, then rely on flush or response logs for server-side success or failure.
+
+### Provider SDK Hooks
+
+To match the Coin app `Externals` tab, each provider should emit two signals:
+
+- Structured app-side status: `external_debug=1 provider=<provider> event=<event> status=<status>`.
+- Raw SDK callback/response lines through `Timber.tag(AdsDebugLogFormat.Tag.EXTERNAL)` when the SDK exposes useful delivery state.
+
+Provider-specific hooks:
+
+- Facebook: enable app-event debug logs and register `AppEventsLogger.ACTION_APP_EVENTS_FLUSHED` while DebugKit is enabled.
+
+```kotlin
+FacebookSdk.setIsDebugEnabled(true)
+FacebookSdk.addLoggingBehavior(LoggingBehavior.APP_EVENTS)
+LocalBroadcastManager.getInstance(application).registerReceiver(
+    facebookFlushReceiver,
+    IntentFilter(AppEventsLogger.ACTION_APP_EVENTS_FLUSHED)
+)
+
+// In receiver:
+Timber.tag(AdsDebugLogFormat.Tag.EXTERNAL)
+    .d("Facebook Flush completed result=$result numEvents=$numEvents events=$events")
+```
+
+- Adjust: install a custom `ILogger` before `Adjust.initSdk(config)` and forward only meaningful response lines.
+
+```kotlin
+AdjustFactory.setLogger(AdjustExternalDebugLogger())
+config.setLogLevel(LogLevel.VERBOSE)
+
+// In ILogger:
+Timber.tag(AdsDebugLogFormat.Tag.EXTERNAL).d("Adjust $line")
+```
+
+Forward Adjust lines containing event/ad-revenue/purchase success or failure, such as `Event tracked`, `Ad revenue tracked`, `purchase`, `Response string`, `Response message`, or `Event Failure`.
+
+- TikTok: enable debug mode, log init callbacks, and register network listeners.
+
+```kotlin
+ttConfig.openDebugMode().setLogLevel(TikTokBusinessSdk.LogLevel.DEBUG)
+TikTokBusinessSdk.initializeSdk(ttConfig, initCallback)
+TikTokBusinessSdk.setUpSdkListeners(null, null, networkListener, null)
+
+Timber.tag(AdsDebugLogFormat.Tag.EXTERNAL).d("TikTok Init success")
+Timber.tag(AdsDebugLogFormat.Tag.EXTERNAL)
+    .d("TikTok Network toSend=$toSend success=$success failed=$failed total=$total")
+```
+
+Keep these hooks in the app's tracking layer, not in UI code. Guard raw SDK hooks with `BuildConfig.DEBUG || AdsDebugKit.isDebugEnabled()` if they are too noisy for normal release usage.
 
 ## Custom Debug Events
 
@@ -415,7 +472,7 @@ Implementation details such as the window manager, panel view, logcat tap, and T
 Library checks:
 
 ```bash
-./gradlew compileReleaseKotlin lintRelease publishToMavenLocal
+./gradlew clean compileReleaseKotlin lintRelease
 ```
 
 Consumer app checks:
@@ -451,12 +508,17 @@ Use the manual release flow first:
 
 Then open Central Portal deployments, inspect validation, and publish the deployment manually.
 
-After the release is validated, tag the same commit:
+After Central Portal shows `PUBLISHED`, tag the same commit and create a GitHub Release:
 
 ```bash
-git tag v0.1.0
+git tag -a v0.1.0 -m "Release v0.1.0"
 git push origin v0.1.0
+gh release create v0.1.0 \
+  --title "AndroidAdsDebugKit v0.1.0" \
+  --notes "Initial public release."
 ```
+
+Do not republish an existing version. If the library changes after `0.1.0`, bump the version, for example to `0.1.1`.
 
 ## License
 
