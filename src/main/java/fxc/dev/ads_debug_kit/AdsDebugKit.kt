@@ -545,11 +545,6 @@ object AdsDebugKit {
         )
     }
 
-    private fun maxInvalidAdUnitIdFor(placement: String): String {
-        val placementHash = placement.hashCode().toUInt().toString(16).padStart(8, '0')
-        return MAX_INVALID_AD_UNIT_PREFIX + placementHash
-    }
-
     private fun providerOnlyPlacementMatch(placement: String): ProviderOnlyPlacementMatch {
         val provider = providerOnlyProviderFor(placement, config.adUnitResourceSuffix)
             ?: return ProviderOnlyPlacementMatch.NONE
@@ -787,5 +782,4 @@ object AdsDebugKit {
 
     private const val TOOL_ACTION_DELAY_MILLIS = 220L
     private const val DEFAULT_ADMOB_INVALID_AD_UNIT_ID = "ca-app-pub-3940256099942544/0000000000"
-    private const val MAX_INVALID_AD_UNIT_PREFIX = "ffffffff"
 }

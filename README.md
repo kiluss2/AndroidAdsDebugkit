@@ -33,7 +33,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.github.kiluss2:android-ads-debug-kit:0.2.2")
+    implementation("io.github.kiluss2:android-ads-debug-kit:0.2.3")
 }
 ```
 
@@ -56,7 +56,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.github.kiluss2:android-ads-debug-kit:0.2.2")
+    implementation("io.github.kiluss2:android-ads-debug-kit:0.2.3")
 }
 ```
 
@@ -601,11 +601,11 @@ Do not retry blindly if the command times out; inspect Central Portal first beca
 After Central Portal shows `PUBLISHED`, tag the same commit and create a GitHub Release:
 
 ```bash
-git tag -a v0.2.2 -m "Release v0.2.2"
-git push origin v0.2.2
-gh release create v0.2.2 \
-  --title "AndroidAdsDebugKit v0.2.2" \
-  --notes "Provider-neutral fallback roles and correct AdMob/AppLovin-only fallback semantics."
+git tag -a v0.2.3 -m "Release v0.2.3"
+git push origin v0.2.3
+gh release create v0.2.3 \
+  --title "AndroidAdsDebugKit v0.2.3" \
+  --notes "Make AppLovin MAX false-mode IDs deliberately malformed so Test Mode cannot fill them."
 ```
 
 Do not republish an existing version. Bump the version for every subsequent release.

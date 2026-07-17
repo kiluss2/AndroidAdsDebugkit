@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "io.github.kiluss2"
-version = "0.2.2"
+version = "0.2.3"
 
 android {
     namespace = "fxc.dev.ads_debug_kit"

@@ -79,6 +79,18 @@ internal fun providerOnlyProviderFor(
     }
 }
 
+/**
+ * MAX Test Mode may fill unknown IDs that still look like valid 16-character hexadecimal IDs.
+ * Keep IDs distinct per placement, but make them deliberately malformed so MAX returns
+ * INVALID_AD_UNIT_ID instead of serving a test creative.
+ */
+internal fun maxInvalidAdUnitIdFor(placement: String): String {
+    val placementHash = placement.hashCode().toUInt().toString(16).padStart(8, '0')
+    return MAX_INVALID_AD_UNIT_PREFIX + placementHash
+}
+
+private const val MAX_INVALID_AD_UNIT_PREFIX = "invalid_"
+
 internal fun normalizeAdDebugSettingsForCapabilities(
     settings: AdDebugSettings,
     allowAdUnitOverrides: Boolean,

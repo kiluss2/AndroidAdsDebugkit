@@ -105,6 +105,17 @@ class AdUnitIdOverrideResolverTest {
     }
 
     @Test
+    fun `max false ids are malformed and distinct per placement`() {
+        val first = maxInvalidAdUnitIdFor("ads_native_intro_first_id")
+        val second = maxInvalidAdUnitIdFor("ads_native_intro_second_id")
+
+        assertEquals(16, first.length)
+        assertEquals(true, first.startsWith("invalid_"))
+        assertEquals(false, first.matches(Regex("[0-9a-f]{16}")))
+        assertEquals(false, first == second)
+    }
+
+    @Test
     fun `missing provider only capability removes unsafe fallback modes`() {
         assertEquals(
             AdDebugSettings(),
