@@ -48,12 +48,13 @@ object AdsDebugKit {
         prefs = AdsDebugPrefs(appContext)
         this.config = config
         val storedSettings = prefs.settings
-        settingsCache = storedSettings.normalizedFor(config)
+        settingsCache = storedSettings
+        discoveredAdUnits = AdUnitResourceDiscoverer.discover(appContext, config)
+        rebuildAdUnitCache(discoverIfMissing = false)
+        settingsCache = storedSettings.normalizedForCurrentConfig()
         if (settingsCache != storedSettings) {
             prefs.settings = settingsCache
         }
-        discoveredAdUnits = AdUnitResourceDiscoverer.discover(appContext, config)
-        rebuildAdUnitCache(discoverIfMissing = false)
         (appContext as? Application)?.let { AdsDebugWindowManager.initialize(it) }
         configureDebugServices(settings.debugEnabled)
         notifyChanged()
@@ -75,7 +76,7 @@ object AdsDebugKit {
             ensureInitialized()
             val previousSettings = settingsCache
             val normalizedValue = value
-                .normalizedFor(config)
+                .normalizedForCurrentConfig()
                 .let { requestedSettings ->
                     if (config.forceDebugEnabled) {
                         requestedSettings.copy(debugEnabled = previousSettings.debugEnabled)
@@ -217,52 +218,77 @@ object AdsDebugKit {
         admobOnlyAdUnitId: String? = null,
         role: AdIdRequestRole = AdIdRequestRole.PRIMARY
     ): String {
+        // Preserve the legacy contract for callers that resolve before initialize().
         if (!isInitialized()) return primaryAdUnitId
-        if (!config.allowAdUnitOverrides) {
-            return configuredAdUnitId(primaryAdUnitId, admobOnlyAdUnitId, role)
-        }
-        if (!settings.debugEnabled) {
-            return configuredAdUnitId(primaryAdUnitId, admobOnlyAdUnitId, role)
-        }
-        if (!isOverridablePlacement(placement) || primaryAdUnitId.isAppIdValue()) return primaryAdUnitId
-        val resolved = when (settings.adIdOverrideMode) {
-            AdIdOverrideMode.NORMAL -> when (role) {
-                AdIdRequestRole.PRIMARY -> primaryAdUnitId
-                AdIdRequestRole.ADMOB_ONLY -> admobOnlyAdUnitId ?: primaryAdUnitId
-            }
-
-            AdIdOverrideMode.FAIL_PRIMARY -> when (role) {
-                AdIdRequestRole.PRIMARY -> if (placement.isPriorityPlacement()) {
-                    invalidAdUnitIdFor(primaryAdUnitId, placement)
-                } else {
-                    primaryAdUnitId
-                }
-                AdIdRequestRole.ADMOB_ONLY -> admobOnlyAdUnitId ?: primaryAdUnitId
-            }
-
-            AdIdOverrideMode.FAIL_ALL -> invalidAdUnitIdFor(primaryAdUnitId, placement)
-            AdIdOverrideMode.FORCE_ADMOB_ONLY -> when (config.mediationProvider) {
-                AdMediationProvider.ADMOB -> when {
-                    placement.isAdmobOnlyPlacement() -> primaryAdUnitId
-                    role == AdIdRequestRole.ADMOB_ONLY -> admobOnlyAdUnitId ?: primaryAdUnitId
-                    else -> invalidAdUnitIdFor(primaryAdUnitId, placement)
-                }
-                AdMediationProvider.APPLOVIN_MAX -> fallbackAdUnitIdFor(
+        if (
+            config.allowAdUnitOverrides &&
+            isDebugEnabled() &&
+            config.mediationProvider == AdMediationProvider.ADMOB &&
+            role == AdIdRequestRole.PRIMARY &&
+            isOverridablePlacement(placement) &&
+            !primaryAdUnitId.isAppIdValue() &&
+            settings.adIdOverrideMode == AdIdOverrideMode.CUSTOM &&
+            customAdUnitMode(placement) == AdUnitCustomMode.ADMOB_ONLY
+        ) {
+            val legacyFallbackId = admobOnlyAdUnitId ?: legacyAdmobOnlyPeerId(placement)
+            if (legacyFallbackId != null) {
+                return resolveProviderAdUnitId(
                     placement = placement,
-                    primaryAdUnitId = primaryAdUnitId,
+                    configuredAdUnitId = legacyFallbackId,
+                    role = AdProviderRequestRole.PROVIDER_ONLY,
                 )
             }
-            AdIdOverrideMode.CUSTOM -> resolveCustomAdUnitId(
-                placement = placement,
-                primaryAdUnitId = primaryAdUnitId,
-                admobOnlyAdUnitId = admobOnlyAdUnitId,
-                role = role
-            )
         }
-        if (resolved != primaryAdUnitId || role == AdIdRequestRole.ADMOB_ONLY) {
+        val configuredAdUnitId = when (role) {
+            AdIdRequestRole.PRIMARY -> primaryAdUnitId
+            AdIdRequestRole.ADMOB_ONLY -> admobOnlyAdUnitId ?: primaryAdUnitId
+        }
+        return resolveProviderAdUnitId(
+            placement = placement,
+            configuredAdUnitId = configuredAdUnitId,
+            role = when (role) {
+                AdIdRequestRole.PRIMARY -> AdProviderRequestRole.PRIMARY
+                AdIdRequestRole.ADMOB_ONLY -> AdProviderRequestRole.PROVIDER_ONLY
+            },
+        )
+    }
+
+    /**
+     * Resolves the configured ID for the request currently being made. A primary request and a
+     * provider-only fallback request must be sent separately by the host app.
+     */
+    fun resolveProviderAdUnitId(
+        placement: String,
+        configuredAdUnitId: String,
+        role: AdProviderRequestRole = AdProviderRequestRole.PRIMARY,
+    ): String {
+        if (!isInitialized()) return configuredAdUnitId
+        val placementMatch = providerOnlyPlacementMatch(placement)
+        val adUnit = adUnitCache.byPlacement[placement]
+        val resolved = AdUnitIdOverrideResolver.resolve(
+            AdUnitIdResolutionInput(
+                configuredAdUnitId = configuredAdUnitId,
+                invalidAdUnitId = invalidAdUnitIdFor(configuredAdUnitId, placement),
+                debugAdUnitId = debugAdUnitIdFor(adUnit, configuredAdUnitId),
+                overrideMode = settings.adIdOverrideMode,
+                customMode = customAdUnitMode(placement),
+                requestRole = role,
+                providerOnlyPlacementMatch = placementMatch,
+                isPriorityPlacement = placement.isPriorityPlacement(),
+                overridesEnabled = config.allowAdUnitOverrides,
+                debugEnabled = isDebugEnabled(),
+                overridable = isOverridablePlacement(placement) && !configuredAdUnitId.isAppIdValue(),
+            )
+        )
+        if (
+            resolved != configuredAdUnitId ||
+            role == AdProviderRequestRole.PROVIDER_ONLY ||
+            placementMatch == ProviderOnlyPlacementMatch.CURRENT_PROVIDER
+        ) {
             logAdIdDebugEvent(
                 placement = placement,
-                message = "AdIdResolver mode=${settings.adIdOverrideMode} role=$role resolved=$resolved"
+                message = "AdIdResolver mode=${overrideModeLabel(settings.adIdOverrideMode)} " +
+                    "role=$role resolved=$resolved"
             )
         }
         return resolved
@@ -279,15 +305,19 @@ object AdsDebugKit {
             return
         }
         val currentSettings = settings
-        val currentModes = if (currentSettings.adIdOverrideMode == AdIdOverrideMode.CUSTOM) {
+        val previousModes = if (currentSettings.adIdOverrideMode == AdIdOverrideMode.CUSTOM) {
             currentSettings.customAdUnitModes
                 .filterKeys(::isOverridablePlacement)
-                .toMutableMap()
         } else {
-            snapshotDisplayModes(currentSettings.adIdOverrideMode).toMutableMap()
+            snapshotDisplayModes(currentSettings.adIdOverrideMode)
         }
-
-        currentModes[placement] = mode
+        val currentModes = customModesAfterSelection(
+            currentModes = previousModes,
+            placement = placement,
+            selectedMode = mode,
+            selectedUnit = adUnitCache.byPlacement[placement]?.unit,
+            providerOnlyUnits = providerOnlyUnitsByPlacement(),
+        )
         val allRelease = currentModes.values.all { it == AdUnitCustomMode.RELEASE }
         settings = currentSettings.copy(
             adIdOverrideMode = if (allRelease) AdIdOverrideMode.NORMAL else AdIdOverrideMode.CUSTOM,
@@ -305,34 +335,26 @@ object AdsDebugKit {
     }
 
     internal fun resolvedAdUnitIdForDisplay(adUnit: AdDebugAdUnit): String {
-        if (!config.allowAdUnitOverrides) return adUnit.adUnitId
-        if (!adUnit.isOverridable()) return adUnit.adUnitId
-        return when (settings.adIdOverrideMode) {
-            AdIdOverrideMode.NORMAL -> adUnit.adUnitId
-            AdIdOverrideMode.FAIL_PRIMARY -> if (adUnit.name.isPriorityPlacement()) {
-                invalidAdUnitIdFor(adUnit)
-            } else {
-                adUnit.adUnitId
-            }
-            AdIdOverrideMode.FAIL_ALL -> invalidAdUnitIdFor(adUnit)
-            AdIdOverrideMode.FORCE_ADMOB_ONLY -> when (config.mediationProvider) {
-                AdMediationProvider.ADMOB -> if (adUnit.name.isAdmobOnlyPlacement()) {
-                    adUnit.adUnitId
+        val placementMatch = providerOnlyPlacementMatch(adUnit.name)
+        return AdUnitIdOverrideResolver.resolve(
+            AdUnitIdResolutionInput(
+                configuredAdUnitId = adUnit.adUnitId,
+                invalidAdUnitId = invalidAdUnitIdFor(adUnit),
+                debugAdUnitId = debugAdUnitIdFor(adUnit, adUnit.adUnitId),
+                overrideMode = settings.adIdOverrideMode,
+                customMode = customAdUnitMode(adUnit.name),
+                requestRole = if (placementMatch == ProviderOnlyPlacementMatch.CURRENT_PROVIDER) {
+                    AdProviderRequestRole.PROVIDER_ONLY
                 } else {
-                    invalidAdUnitIdFor(adUnit)
-                }
-                AdMediationProvider.APPLOVIN_MAX -> fallbackAdUnitIdFor(
-                    placement = adUnit.name,
-                    primaryAdUnitId = adUnit.adUnitId,
-                )
-            }
-            AdIdOverrideMode.CUSTOM -> when (customAdUnitMode(adUnit.name)) {
-                AdUnitCustomMode.RELEASE -> adUnit.adUnitId
-                AdUnitCustomMode.DEBUG -> debugAdUnitIdFor(adUnit, adUnit.adUnitId)
-                AdUnitCustomMode.FALSE -> invalidAdUnitIdFor(adUnit)
-                AdUnitCustomMode.ADMOB_ONLY -> providerFallbackDisplayIdFor(adUnit)
-            }
-        }
+                    AdProviderRequestRole.PRIMARY
+                },
+                providerOnlyPlacementMatch = placementMatch,
+                isPriorityPlacement = adUnit.name.isPriorityPlacement(),
+                overridesEnabled = config.allowAdUnitOverrides,
+                debugEnabled = isDebugEnabled(),
+                overridable = adUnit.isOverridable(),
+            )
+        )
     }
 
     internal fun displayModeFor(adUnit: AdDebugAdUnit): AdUnitCustomMode {
@@ -351,19 +373,37 @@ object AdsDebugKit {
             }
             AdIdOverrideMode.FAIL_ALL -> AdUnitCustomMode.FALSE
             AdIdOverrideMode.CUSTOM -> customAdUnitMode(adUnit.name)
-            AdIdOverrideMode.FORCE_ADMOB_ONLY -> when (config.mediationProvider) {
-                AdMediationProvider.ADMOB -> if (adUnit.name.isAdmobOnlyPlacement()) {
-                    AdUnitCustomMode.RELEASE
-                } else {
-                    AdUnitCustomMode.FALSE
-                }
-                AdMediationProvider.APPLOVIN_MAX -> if (adUnit.hasFallbackAdUnit()) {
-                    AdUnitCustomMode.ADMOB_ONLY
-                } else {
-                    AdUnitCustomMode.RELEASE
-                }
+            AdIdOverrideMode.FORCE_ADMOB_ONLY -> if (
+                providerOnlyPlacementMatch(adUnit.name) == ProviderOnlyPlacementMatch.CURRENT_PROVIDER
+            ) {
+                AdUnitCustomMode.RELEASE
+            } else {
+                AdUnitCustomMode.FALSE
             }
         }
+    }
+
+    internal fun hasProviderOnlyFallback(): Boolean {
+        if (!isInitialized()) return false
+        return providerOnlyUnitsByPlacement().isNotEmpty()
+    }
+
+    internal fun hasProviderOnlyFallbackFor(unit: AdDebugUnit): Boolean {
+        return providerOnlyUnitsByPlacement().any { (_, providerOnlyUnit) ->
+            providerOnlyUnit == unit
+        }
+    }
+
+    internal fun providerOnlyFallbackUnits(): Set<AdDebugUnit> {
+        return providerOnlyUnitsByPlacement().values.toSet()
+    }
+
+    internal fun isProviderOnlyAdUnit(adUnit: AdDebugAdUnit): Boolean {
+        return providerOnlyPlacementMatch(adUnit.name) == ProviderOnlyPlacementMatch.CURRENT_PROVIDER
+    }
+
+    internal fun overrideModeLabel(mode: AdIdOverrideMode): String {
+        return if (mode == AdIdOverrideMode.FORCE_ADMOB_ONLY) "FORCE_FALLBACK" else mode.name
     }
 
     fun show() {
@@ -439,52 +479,6 @@ object AdsDebugKit {
         }
     }
 
-    private fun resolveCustomAdUnitId(
-        placement: String,
-        primaryAdUnitId: String,
-        admobOnlyAdUnitId: String?,
-        role: AdIdRequestRole
-    ): String {
-        val adUnit = adUnitCache.byPlacement[placement]
-        val mode = customAdUnitMode(placement)
-        return when (mode) {
-            AdUnitCustomMode.RELEASE -> when (role) {
-                AdIdRequestRole.PRIMARY -> primaryAdUnitId
-                AdIdRequestRole.ADMOB_ONLY -> admobOnlyAdUnitId ?: primaryAdUnitId
-            }
-
-            AdUnitCustomMode.DEBUG -> {
-                if (adUnit?.unit == AdDebugUnit.APP_ID || primaryAdUnitId.isAppIdValue()) {
-                    adUnit?.adUnitId ?: primaryAdUnitId
-                } else {
-                    debugAdUnitIdFor(adUnit, primaryAdUnitId)
-                }
-            }
-
-            AdUnitCustomMode.FALSE -> invalidAdUnitIdFor(primaryAdUnitId, placement)
-            AdUnitCustomMode.ADMOB_ONLY -> when (config.mediationProvider) {
-                AdMediationProvider.ADMOB -> admobOnlyAdUnitId
-                    ?: adUnit?.let { admobOnlyDisplayIdFor(it) }
-                    ?: primaryAdUnitId
-                AdMediationProvider.APPLOVIN_MAX -> fallbackAdUnitIdFor(
-                    placement = placement,
-                    primaryAdUnitId = primaryAdUnitId,
-                )
-            }
-        }
-    }
-
-    private fun configuredAdUnitId(
-        primaryAdUnitId: String,
-        admobOnlyAdUnitId: String?,
-        role: AdIdRequestRole
-    ): String {
-        return when (role) {
-            AdIdRequestRole.PRIMARY -> primaryAdUnitId
-            AdIdRequestRole.ADMOB_ONLY -> admobOnlyAdUnitId ?: primaryAdUnitId
-        }
-    }
-
     private fun rebuildAdUnitCache(discoverIfMissing: Boolean) {
         if (discoverIfMissing && discoveredAdUnits.isEmpty()) {
             discoveredAdUnits = AdUnitResourceDiscoverer.discover(appContext, config)
@@ -505,8 +499,6 @@ object AdsDebugKit {
             units = units,
             byPlacement = units.associateBy { it.name },
             byAdUnitId = byAdUnitId,
-            admobOnlyByPlacement = units.associateWithAdmobOnlyPlacement(),
-            fallbackByPlacement = units.associateWithFallbackPlacement(),
         )
         isAdUnitCacheInitialized = true
     }
@@ -553,75 +545,35 @@ object AdsDebugKit {
         )
     }
 
-    private fun admobOnlyDisplayIdFor(adUnit: AdDebugAdUnit): String {
-        if (adUnit.unit == AdDebugUnit.APP_ID) return adUnit.adUnitId
-        return adUnitCache.admobOnlyByPlacement[adUnit.name]?.adUnitId ?: adUnit.adUnitId
-    }
-
-    private fun providerFallbackDisplayIdFor(adUnit: AdDebugAdUnit): String {
-        return when (config.mediationProvider) {
-            AdMediationProvider.ADMOB -> admobOnlyDisplayIdFor(adUnit)
-            AdMediationProvider.APPLOVIN_MAX -> fallbackAdUnitIdFor(adUnit.name, adUnit.adUnitId)
-        }
-    }
-
-    private fun fallbackAdUnitIdFor(placement: String, primaryAdUnitId: String): String {
-        return adUnitCache.fallbackByPlacement[placement]?.adUnitId ?: primaryAdUnitId
-    }
-
-    private fun AdDebugAdUnit.hasFallbackAdUnit(): Boolean {
-        return adUnitCache.fallbackByPlacement[name]
-            ?.adUnitId
-            ?.let { fallbackId -> fallbackId != adUnitId } == true
-    }
-
     private fun maxInvalidAdUnitIdFor(placement: String): String {
         val placementHash = placement.hashCode().toUInt().toString(16).padStart(8, '0')
         return MAX_INVALID_AD_UNIT_PREFIX + placementHash
     }
 
-    private fun List<AdDebugAdUnit>.associateWithAdmobOnlyPlacement(): Map<String, AdDebugAdUnit> {
-        val byPlacement = associateBy { it.name }
-        return buildMap {
-            this@associateWithAdmobOnlyPlacement.forEach { adUnit ->
-                val admobOnlyPlacement = adUnit.name.admobOnlyPeerPlacement() ?: return@forEach
-                byPlacement[admobOnlyPlacement]?.let { admobOnlyAdUnit ->
-                    put(adUnit.name, admobOnlyAdUnit)
-                }
+    private fun providerOnlyPlacementMatch(placement: String): ProviderOnlyPlacementMatch {
+        val provider = providerOnlyProviderFor(placement, config.adUnitResourceSuffix)
+            ?: return ProviderOnlyPlacementMatch.NONE
+        return if (provider == config.mediationProvider) {
+            ProviderOnlyPlacementMatch.CURRENT_PROVIDER
+        } else {
+            ProviderOnlyPlacementMatch.OTHER_PROVIDER
+        }
+    }
+
+    private fun providerOnlyUnitsByPlacement(): Map<String, AdDebugUnit> {
+        return adUnitCache.units
+            .asSequence()
+            .filter { adUnit ->
+                providerOnlyPlacementMatch(adUnit.name) == ProviderOnlyPlacementMatch.CURRENT_PROVIDER
             }
-        }
+            .associate { adUnit -> adUnit.name to adUnit.unit }
     }
 
-    private fun List<AdDebugAdUnit>.associateWithFallbackPlacement(): Map<String, AdDebugAdUnit> {
-        val byPlacement = associateBy { it.name }
-        return buildMap {
-            this@associateWithFallbackPlacement.forEach { adUnit ->
-                val fallbackPlacement = adUnit.name.fallbackPeerPlacement() ?: return@forEach
-                byPlacement[fallbackPlacement]?.let { fallbackAdUnit ->
-                    put(adUnit.name, fallbackAdUnit)
-                }
-            }
-        }
-    }
-
-    private fun String.admobOnlyPeerPlacement(): String? {
-        if (isAdmobOnlyPlacement() || !endsWith(config.adUnitResourceSuffix)) return null
-        return removeSuffix(config.adUnitResourceSuffix) + "_admob_only" + config.adUnitResourceSuffix
-    }
-
-    private fun String.fallbackPeerPlacement(): String? {
-        if (!endsWith(config.adUnitResourceSuffix)) return null
-        val baseName = removeSuffix(config.adUnitResourceSuffix)
-        val fallbackBase = when {
-            baseName.endsWith("_2f", ignoreCase = true) -> baseName.dropLast(3)
-            baseName.endsWith("_mf", ignoreCase = true) -> baseName.dropLast(3)
-            else -> return null
-        }
-        return fallbackBase + config.adUnitResourceSuffix
-    }
-
-    private fun String.isAdmobOnlyPlacement(): Boolean {
-        return contains("_admob_only") && endsWith(config.adUnitResourceSuffix)
+    private fun legacyAdmobOnlyPeerId(placement: String): String? {
+        if (!placement.endsWith(config.adUnitResourceSuffix)) return null
+        val fallbackPlacement = placement.removeSuffix(config.adUnitResourceSuffix) +
+            "_admob_only" + config.adUnitResourceSuffix
+        return adUnitCache.byPlacement[fallbackPlacement]?.adUnitId
     }
 
     private fun String.isPriorityPlacement(): Boolean {
@@ -660,11 +612,12 @@ object AdsDebugKit {
         showToast("${toolAction.title} failed")
     }
 
-    private fun AdDebugSettings.normalizedFor(config: AdDebugConfig): AdDebugSettings {
-        if (config.allowAdUnitOverrides) return this
-        return copy(
-            adIdOverrideMode = AdIdOverrideMode.NORMAL,
-            customAdUnitModes = emptyMap()
+    private fun AdDebugSettings.normalizedForCurrentConfig(): AdDebugSettings {
+        return normalizeAdDebugSettingsForCapabilities(
+            settings = this,
+            allowAdUnitOverrides = config.allowAdUnitOverrides,
+            providerOnlyUnits = providerOnlyFallbackUnits(),
+            unitByPlacement = adUnitCache.units.associate { adUnit -> adUnit.name to adUnit.unit },
         )
     }
 
@@ -830,8 +783,6 @@ object AdsDebugKit {
         val units: List<AdDebugAdUnit> = emptyList(),
         val byPlacement: Map<String, AdDebugAdUnit> = emptyMap(),
         val byAdUnitId: Map<String, AdDebugAdUnit> = emptyMap(),
-        val admobOnlyByPlacement: Map<String, AdDebugAdUnit> = emptyMap(),
-        val fallbackByPlacement: Map<String, AdDebugAdUnit> = emptyMap(),
     )
 
     private const val TOOL_ACTION_DELAY_MILLIS = 220L

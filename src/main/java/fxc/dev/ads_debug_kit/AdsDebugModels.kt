@@ -56,19 +56,44 @@ enum class AdIdOverrideMode {
     FAIL_PRIMARY,
     FAIL_ALL,
     FORCE_ADMOB_ONLY,
-    CUSTOM
+    CUSTOM;
+
+    companion object {
+        /**
+         * Provider-neutral source alias for the legacy enum entry. Keeping the backing enum entry
+         * avoids breaking consumers that persist or exhaustively match [FORCE_ADMOB_ONLY].
+         */
+        @JvmField
+        val FORCE_FALLBACK: AdIdOverrideMode = FORCE_ADMOB_ONLY
+    }
 }
 
 enum class AdUnitCustomMode {
     RELEASE,
     DEBUG,
     FALSE,
-    ADMOB_ONLY
+    ADMOB_ONLY;
+
+    companion object {
+        /** Provider-neutral source alias for the legacy persisted value. */
+        @JvmField
+        val FALLBACK: AdUnitCustomMode = ADMOB_ONLY
+    }
 }
 
 enum class AdIdRequestRole {
     PRIMARY,
     ADMOB_ONLY
+}
+
+/**
+ * Identifies the configured ID passed for the request currently being made. DebugKit never starts
+ * a fallback request or replaces a primary request with a provider-only ID; that remains the host
+ * app's responsibility.
+ */
+enum class AdProviderRequestRole {
+    PRIMARY,
+    PROVIDER_ONLY
 }
 
 data class AdDebugAdUnit(

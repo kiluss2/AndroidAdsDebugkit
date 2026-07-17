@@ -279,13 +279,17 @@ internal class AdsDebugPanelView(
         if (AdsDebugKit.currentConfig().allowAdUnitOverrides) {
             addAdIdOverrideCard()
             addButton("Cycle mode") {
-                val nextMode = when (AdsDebugKit.settings.adIdOverrideMode) {
-                    AdIdOverrideMode.NORMAL -> AdIdOverrideMode.FAIL_PRIMARY
-                    AdIdOverrideMode.FAIL_PRIMARY -> AdIdOverrideMode.FAIL_ALL
-                    AdIdOverrideMode.FAIL_ALL -> AdIdOverrideMode.FORCE_ADMOB_ONLY
-                    AdIdOverrideMode.FORCE_ADMOB_ONLY -> AdIdOverrideMode.CUSTOM
-                    AdIdOverrideMode.CUSTOM -> AdIdOverrideMode.NORMAL
+                val availableModes = buildList {
+                    add(AdIdOverrideMode.NORMAL)
+                    add(AdIdOverrideMode.FAIL_PRIMARY)
+                    add(AdIdOverrideMode.FAIL_ALL)
+                    if (AdsDebugKit.hasProviderOnlyFallback()) {
+                        add(AdIdOverrideMode.FORCE_ADMOB_ONLY)
+                    }
+                    add(AdIdOverrideMode.CUSTOM)
                 }
+                val currentIndex = availableModes.indexOf(AdsDebugKit.settings.adIdOverrideMode)
+                val nextMode = availableModes[(currentIndex + 1).mod(availableModes.size)]
                 AdsDebugKit.settings = AdsDebugKit.settings.copy(adIdOverrideMode = nextMode)
             }
         }
@@ -371,6 +375,9 @@ internal class AdsDebugPanelView(
 
     private fun showAdIdOverrideInfo() {
         val isMax = AdsDebugKit.currentConfig().mediationProvider == AdMediationProvider.APPLOVIN_MAX
+        val hasProviderOnlyFallback = AdsDebugKit.hasProviderOnlyFallback()
+        val providerOnlyFormats = AdsDebugKit.providerOnlyFallbackUnits()
+            .joinToString { it.name.lowercase() }
         var okButton: TextView? = null
         val dialog = AlertDialog.Builder(context)
             .setView(
@@ -393,8 +400,16 @@ internal class AdsDebugPanelView(
                                     "NORMAL: use MAX IDs from app resources.",
                                     "FAIL_PRIMARY: 2F/MF priority placements use an invalid MAX ID.",
                                     "FAIL_ALL: all requests use an invalid MAX ID.",
-                                    "FORCE_FALLBACK: 2F/MF placements use their base/AP resource ID.",
-                                    "CUSTOM: Ad Units shows Release / Test / False / Fallback per placement.",
+                                    if (hasProviderOnlyFallback) {
+                                        "FORCE_FALLBACK: all primary IDs are invalid; only AppLovin-only IDs stay configured (formats: $providerOnlyFormats). The app owns the separate fallback request."
+                                    } else {
+                                        "FORCE_FALLBACK unavailable: no AppLovin-only ID is configured."
+                                    },
+                                    if (hasProviderOnlyFallback) {
+                                        "CUSTOM: primary Ad Units show Release / Test / False / Fallback. Fallback invalidates that primary request."
+                                    } else {
+                                        "CUSTOM: Ad Units show Release / Test / False."
+                                    },
                                     "MAX Test keeps the configured ID; MAX Test Mode controls test delivery. Restart after changing debug or IDs."
                                 ).joinToString("\n\n")
                             } else {
@@ -402,8 +417,16 @@ internal class AdsDebugPanelView(
                                     "NORMAL: use app configured IDs.",
                                     "FAIL_PRIMARY: only 2F/MF priority placements use invalid ID; normal and AdMob-only IDs stay configured.",
                                     "FAIL_ALL: all requests use invalid ID.",
-                                    "FORCE_ADMOB_ONLY: every non-AdMob-only placement uses invalid ID; only *_admob_only_id stays configured.",
-                                    "CUSTOM: Ad Units tab shows Release / Debug / False buttons per placement.",
+                                    if (hasProviderOnlyFallback) {
+                                        "FORCE_FALLBACK: every primary placement uses an invalid ID; only *_admob_only_id stays configured (formats: $providerOnlyFormats). The app owns the separate fallback request."
+                                    } else {
+                                        "FORCE_FALLBACK unavailable: no AdMob-only ID is configured."
+                                    },
+                                    if (hasProviderOnlyFallback) {
+                                        "CUSTOM: primary Ad Units show Release / Debug / False / Fallback. Fallback invalidates that primary request."
+                                    } else {
+                                        "CUSTOM: Ad Units show Release / Debug / False."
+                                    },
                                     "Custom Release uses the app configured ID. Debug uses Google test ID by ad format. False uses /0000000000."
                                 ).joinToString("\n\n")
                             }
@@ -589,11 +612,21 @@ internal class AdsDebugPanelView(
         )
         listOf(
             "provider=${AdsDebugKit.currentConfig().mediationProvider}",
-            "mode=${AdsDebugKit.settings.adIdOverrideMode}",
-            if (isMax) {
+            "mode=${AdsDebugKit.overrideModeLabel(AdsDebugKit.settings.adIdOverrideMode)}",
+            if (AdsDebugKit.hasProviderOnlyFallback()) {
                 "Cycle: normal/fail-primary/fail-all/force-fallback/custom."
             } else {
-                "Cycle: normal/fail-primary/fail-all/force-admob-only/custom."
+                "Cycle: normal/fail-primary/fail-all/custom."
+            },
+            if (AdsDebugKit.hasProviderOnlyFallback()) {
+                val formats = AdsDebugKit.providerOnlyFallbackUnits().joinToString { it.name.lowercase() }
+                if (isMax) {
+                    "fallback=AppLovin-only configured for $formats"
+                } else {
+                    "fallback=AdMob-only configured for $formats"
+                }
+            } else {
+                if (isMax) "fallback=unavailable (no AppLovin-only ID)" else "fallback=unavailable (no AdMob-only ID)"
             }
         ).forEach { line ->
             card.addView(
@@ -667,9 +700,6 @@ internal class AdsDebugPanelView(
         val debugLabel = if (
             AdsDebugKit.currentConfig().mediationProvider == AdMediationProvider.APPLOVIN_MAX
         ) "Test" else "Debug"
-        val fallbackLabel = if (
-            AdsDebugKit.currentConfig().mediationProvider == AdMediationProvider.APPLOVIN_MAX
-        ) "Fallback" else "AdMob"
         return LinearLayout(context).apply {
             orientation = HORIZONTAL
             gravity = Gravity.START
@@ -677,7 +707,12 @@ internal class AdsDebugPanelView(
             addOverrideModeButton("Release", adUnit, AdUnitCustomMode.RELEASE, selectedMode)
             addOverrideModeButton(debugLabel, adUnit, AdUnitCustomMode.DEBUG, selectedMode)
             addOverrideModeButton("False", adUnit, AdUnitCustomMode.FALSE, selectedMode)
-            addOverrideModeButton(fallbackLabel, adUnit, AdUnitCustomMode.ADMOB_ONLY, selectedMode)
+            if (
+                AdsDebugKit.hasProviderOnlyFallbackFor(adUnit.unit) &&
+                !AdsDebugKit.isProviderOnlyAdUnit(adUnit)
+            ) {
+                addOverrideModeButton("Fallback", adUnit, AdUnitCustomMode.ADMOB_ONLY, selectedMode)
+            }
         }
     }
 

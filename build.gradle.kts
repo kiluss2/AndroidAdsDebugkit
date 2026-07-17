@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "io.github.kiluss2"
-version = "0.2.1"
+version = "0.2.2"
 
 android {
     namespace = "fxc.dev.ads_debug_kit"
@@ -32,6 +32,7 @@ kotlin {
 
 dependencies {
     implementation("com.jakewharton.timber:timber:5.0.1")
+    testImplementation("junit:junit:4.13.2")
 }
 
 mavenPublishing {

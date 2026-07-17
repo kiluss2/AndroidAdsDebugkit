@@ -25,7 +25,7 @@ It is designed for production QA flows where testers need to enable a hidden deb
 
 ### Maven Central
 
-Release coordinate for this source version (use it only after `0.2.1` is visible on Maven Central):
+Release coordinate:
 
 ```kotlin
 repositories {
@@ -33,7 +33,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.github.kiluss2:android-ads-debug-kit:0.2.1")
+    implementation("io.github.kiluss2:android-ads-debug-kit:0.2.2")
 }
 ```
 
@@ -56,7 +56,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.github.kiluss2:android-ads-debug-kit:0.2.1")
+    implementation("io.github.kiluss2:android-ads-debug-kit:0.2.2")
 }
 ```
 
@@ -172,7 +172,7 @@ AdDebugConfig(
 )
 ```
 
-In this mode `resolveAdUnitId(...)` always returns the configured primary or fallback ID, override controls are hidden, and existing AdMob consumers keep the original behavior because the option defaults to `true`.
+In this mode each resolver call returns the configured ID for that request, override controls are hidden, and existing AdMob consumers keep the original behavior because the option defaults to `true`.
 
 ## AppLovin MAX
 
@@ -185,7 +185,14 @@ AdDebugConfig(
 )
 ```
 
-MAX has no reusable sample ad-unit IDs. In `Test` mode DebugKit therefore returns the ID discovered from the app's `ads_*_id` resources unchanged; the host app must initialize MAX Test Mode. `False` creates a stable invalid 16-character ID per placement, while `Fallback` maps an `_2f_id` or `_mf_id` placement to the matching base `_id` resource. No production MAX IDs are embedded in DebugKit.
+MAX has no reusable sample ad-unit IDs. In `Test` mode DebugKit therefore returns the configured app ID unchanged; the host app must initialize MAX Test Mode. `False` creates a stable invalid 16-character ID per placement. No production MAX IDs are embedded in DebugKit.
+
+DebugKit recognizes provider-only resources by exact suffix:
+
+- AdMob: `*_admob_only_id`
+- AppLovin MAX: `*_applovin_only_id` (`*_max_only_id` is accepted as a legacy/short alias)
+
+`FORCE_FALLBACK` is available only when a provider-only resource for the selected provider is discovered through resources or `allAdUnits`. It makes every primary request use an invalid ID and keeps only provider-only requests configured. DebugKit never maps 2F/MF IDs to base/AP IDs, never starts a fallback request, and never substitutes a provider-only ID into a primary request. The host app owns its actual primary-failure → fallback callback flow. Apps without provider-only resources, such as an app that has not implemented fallback yet, do not see this mode in the cycle or per-unit controls. Per-placement `Fallback` is shown only for ad formats that have a matching provider-only format registered.
 
 MAX ad objects bind their ad unit during construction. Initialize DebugKit before ads/tracking and restart the app after changing debug or override settings. Set `forceDebugEnabled = true` only for a QA build that must start with DebugKit and SDK test configuration enabled. The forced value is not written into the tester's persisted toggle, so changing the build config back to `false` does not accidentally keep QA mode enabled.
 
@@ -209,7 +216,30 @@ The panel is closed before an action runs. Exceptions are caught and surfaced as
 
 ## Runtime Ad Unit Override
 
-Before loading an ad, resolve the ad unit through the kit:
+### Provider-neutral API
+
+Pass the configured ID for the request currently being made. Primary and provider-only requests are separate calls because the host app owns the fallback flow:
+
+```kotlin
+val primaryId = AdsDebugKit.resolveProviderAdUnitId(
+    placement = "ads_interstitial_id",
+    configuredAdUnitId = getString(R.string.ads_interstitial_id),
+    role = AdProviderRequestRole.PRIMARY
+)
+
+// Call this only from the host app's real primary-failure fallback path.
+val providerOnlyId = AdsDebugKit.resolveProviderAdUnitId(
+    placement = "ads_interstitial_applovin_only_id",
+    configuredAdUnitId = getString(R.string.ads_interstitial_applovin_only_id),
+    role = AdProviderRequestRole.PROVIDER_ONLY
+)
+```
+
+Register provider-only resources in the normal `ads_*_id` discovery set (or `allAdUnits`) so DebugKit can expose `FORCE_FALLBACK` safely.
+
+### Legacy AdMob API
+
+The existing API and named arguments remain available for AdMob consumers:
 
 ```kotlin
 val requestAdUnitId = AdsDebugKit.resolveAdUnitId(
@@ -252,13 +282,17 @@ internal object AdsDebugBridge {
 }
 ```
 
+For compatibility with `0.1.x`, legacy AdMob `CUSTOM + ADMOB_ONLY` still substitutes the explicitly supplied/discovered AdMob-only ID. New provider-neutral integrations should use `resolveProviderAdUnitId(...)`; its `Fallback` control invalidates the primary so the host app's real fallback callback performs the second request.
+
 ### Override Modes
 
 - `NORMAL`: use configured app IDs.
 - `FAIL_PRIMARY`: priority placements such as `_2F_id` and `_MF_id` use invalid IDs; normal and AdMob-only IDs stay configured.
 - `FAIL_ALL`: all overridable ad unit requests use an invalid ID.
-- `FORCE_ADMOB_ONLY`: AdMob keeps its legacy AdMob-only behavior; MAX maps 2F/MF placements to their base resource ID.
-- `CUSTOM`: each placement can be set to `Release`, `Debug`/`Test`, `False`, or `AdMob`/`Fallback` from the Ad Units tab.
+- `FORCE_FALLBACK`: every primary request uses an invalid ID; only the current provider's provider-only request/resource stays configured. This mode is hidden when no provider-only resource is registered.
+- `CUSTOM`: each placement can be set to `Release`, `Debug`/`Test`, `False`, or `Fallback` when provider-only fallback is available. Custom `Fallback` invalidates the selected primary; it does not replace that request's ID.
+
+For compatibility, the persisted enum entry remains `FORCE_ADMOB_ONLY` and `AdUnitCustomMode.ADMOB_ONLY`; provider-neutral source aliases `FORCE_FALLBACK` and `FALLBACK` point to those same entries. They are companion aliases rather than new enum entries, so persisted `.name`, `entries`, and `valueOf(...)` continue to use the legacy names.
 
 `ads_app_id` and app IDs in the `ca-app-pub-xxx~yyy` format are treated as read-only and are not overridden.
 
@@ -510,6 +544,7 @@ Main entry points:
 - `AdsDebugKit.toggle()`
 - `AdsDebugKit.setDebugEnabled(...)`
 - `AdsDebugKit.resolveAdUnitId(...)`
+- `AdsDebugKit.resolveProviderAdUnitId(...)`
 - `DebugComboGestureHelper`
 - `AdDebugConfig`
 - `AdMediationProvider`
@@ -517,6 +552,7 @@ Main entry points:
 - `AdDebugToolAction`
 - `AdDebugUnit`
 - `AdIdRequestRole`
+- `AdProviderRequestRole`
 - `AdsDebugLogFormat`
 
 Implementation details such as the window manager, panel view, logcat tap, and Timber parser are internal.
@@ -526,7 +562,7 @@ Implementation details such as the window manager, panel view, logcat tap, and T
 Library checks:
 
 ```bash
-./gradlew clean compileReleaseKotlin lintRelease
+./gradlew clean testDebugUnitTest compileReleaseKotlin lintRelease checkSigningConfiguration
 ```
 
 Consumer app checks:
@@ -554,22 +590,22 @@ signingInMemoryKey=<ascii-armored-private-gpg-key>
 signingInMemoryKeyPassword=<gpg-key-passphrase>
 ```
 
-Use the manual release flow first:
+Publish and release the signed deployment:
 
 ```bash
-./gradlew clean lintRelease publishToMavenCentral
+./gradlew publishAndReleaseToMavenCentral
 ```
 
-Then open Central Portal deployments, inspect validation, and publish the deployment manually.
+Do not retry blindly if the command times out; inspect Central Portal first because published versions are immutable.
 
 After Central Portal shows `PUBLISHED`, tag the same commit and create a GitHub Release:
 
 ```bash
-git tag -a v0.2.1 -m "Release v0.2.1"
-git push origin v0.2.1
-gh release create v0.2.1 \
-  --title "AndroidAdsDebugKit v0.2.1" \
-  --notes "Provider-aware AdMob/MAX overrides and custom fallback modes."
+git tag -a v0.2.2 -m "Release v0.2.2"
+git push origin v0.2.2
+gh release create v0.2.2 \
+  --title "AndroidAdsDebugKit v0.2.2" \
+  --notes "Provider-neutral fallback roles and correct AdMob/AppLovin-only fallback semantics."
 ```
 
 Do not republish an existing version. Bump the version for every subsequent release.
