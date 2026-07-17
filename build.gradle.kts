@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "io.github.kiluss2"
-version = "0.1.0"
+version = "0.2.1"
 
 android {
     namespace = "fxc.dev.ads_debug_kit"
@@ -56,7 +56,7 @@ mavenPublishing {
 
     pom {
         name.set("AndroidAdsDebugKit")
-        description.set("Android in-app ads debug overlay with hidden unlock gesture, shake toggle, ad events, revenue logs, and runtime ad id override modes.")
+        description.set("Android in-app ads debug overlay with hidden unlock gesture, shake toggle, ad events, revenue logs, optional runtime ad id overrides, and custom tools.")
         inceptionYear.set("2026")
         url.set("https://github.com/kiluss2/AndroidAdsDebugkit")
         licenses {

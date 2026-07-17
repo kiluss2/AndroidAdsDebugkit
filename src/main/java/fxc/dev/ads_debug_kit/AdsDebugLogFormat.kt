@@ -46,6 +46,7 @@ object AdsDebugLogFormat {
         const val CLICK = "click"
         const val IMPRESSION = "impression"
         const val POPULATE = "populate"
+        const val EXPIRED = "expired"
         const val FALLBACK = "fallback"
         const val PAID = "paid"
     }

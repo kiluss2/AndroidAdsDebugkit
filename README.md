@@ -5,16 +5,18 @@
 
 AndroidAdsDebugKit is an in-app debug panel for inspecting ads, ad revenue, external tracking logs, and runtime ad unit overrides in debug or release builds.
 
-It is designed for production QA flows where testers need to enable a hidden debug panel from inside the app, inspect real ad states, force ad-load failures, test AdMob-only fallback, and verify external SDK tracking without rebuilding the app.
+It is designed for production QA flows where testers need to enable a hidden debug panel from inside the app, inspect real ad states, force ad-load failures, test tier fallback, and verify external SDK tracking without rebuilding the app.
 
 ## Features
 
 - Hidden unlock gesture for release builds.
 - Floating near-fullscreen debug sheet that survives Activity navigation.
-- Ad state dashboard for real GMA ads: load, show/impression, revenue.
+- Ad state dashboard for AdMob or AppLovin MAX ads: load, show/impression, revenue.
 - External tracking log tab for Adjust, Facebook, TikTok, AppsFlyer, and similar SDK logs.
 - Custom event tab for app-defined QA/debug events.
-- Runtime ad unit override modes: normal, fail primary, fail all, force AdMob-only, custom per placement.
+- Provider-aware AdMob and AppLovin MAX runtime modes.
+- Optional runtime ad unit override modes: normal, fail primary, fail all, force fallback, custom per placement.
+- Provider-neutral custom tool actions that receive the current `Activity`.
 - Automatic ad unit discovery from `R.string` resources matching `ads_*_id`.
 - Structured Timber parser for ads and external logs.
 - R8 consumer rules for resource-name discovery.
@@ -23,7 +25,7 @@ It is designed for production QA flows where testers need to enable a hidden deb
 
 ### Maven Central
 
-Available on Maven Central:
+Release coordinate for this source version (use it only after `0.2.1` is visible on Maven Central):
 
 ```kotlin
 repositories {
@@ -31,7 +33,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.github.kiluss2:android-ads-debug-kit:0.1.0")
+    implementation("io.github.kiluss2:android-ads-debug-kit:0.2.1")
 }
 ```
 
@@ -54,7 +56,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.github.kiluss2:android-ads-debug-kit:0.1.0")
+    implementation("io.github.kiluss2:android-ads-debug-kit:0.2.1")
 }
 ```
 
@@ -106,7 +108,7 @@ When `debugEnabled = false`:
 - Shake detector is stopped.
 - Overlay is hidden.
 
-This means app ads use the normal `configs.xml` / production configuration unless a tester explicitly enables the hidden debug mode.
+This means app ads use the normal `configs.xml` / production configuration unless a tester explicitly enables the hidden debug mode. Provider and tracking SDK initialization should read the persisted setting at app startup; restart after changing it when the SDK cannot safely change mode in-process.
 
 ## Ad Unit Discovery
 
@@ -131,7 +133,7 @@ placement = ads_interstitial_open_id
 adUnitId = ca-app-pub-xxx/yyy
 ```
 
-The placement is important because multiple placements can share the same AdMob ad unit ID, but DebugKit still needs to track and override each placement independently.
+The placement is important because multiple placements can share the same ad unit ID, but DebugKit still needs to track and override each placement independently.
 
 For custom apps, pass manual units:
 
@@ -159,6 +161,51 @@ AdDebugConfig(
     enableDexResourceScan = false
 )
 ```
+
+## Read-only Ad Units
+
+Apps using a mediation SDK without reusable sample IDs can keep the Ad Units tab read-only:
+
+```kotlin
+AdDebugConfig(
+    allowAdUnitOverrides = false
+)
+```
+
+In this mode `resolveAdUnitId(...)` always returns the configured primary or fallback ID, override controls are hidden, and existing AdMob consumers keep the original behavior because the option defaults to `true`.
+
+## AppLovin MAX
+
+Select MAX explicitly and keep overrides enabled:
+
+```kotlin
+AdDebugConfig(
+    mediationProvider = AdMediationProvider.APPLOVIN_MAX,
+    allowAdUnitOverrides = true
+)
+```
+
+MAX has no reusable sample ad-unit IDs. In `Test` mode DebugKit therefore returns the ID discovered from the app's `ads_*_id` resources unchanged; the host app must initialize MAX Test Mode. `False` creates a stable invalid 16-character ID per placement, while `Fallback` maps an `_2f_id` or `_mf_id` placement to the matching base `_id` resource. No production MAX IDs are embedded in DebugKit.
+
+MAX ad objects bind their ad unit during construction. Initialize DebugKit before ads/tracking and restart the app after changing debug or override settings. Set `forceDebugEnabled = true` only for a QA build that must start with DebugKit and SDK test configuration enabled. The forced value is not written into the tester's persisted toggle, so changing the build config back to `false` does not accidentally keep QA mode enabled.
+
+## Custom Tools
+
+Register provider-specific tools without adding that provider SDK to DebugKit:
+
+```kotlin
+AdDebugConfig(
+    toolActions = listOf(
+        AdDebugToolAction(
+            id = "mediation_debugger",
+            title = "Open Mediation Debugger",
+            action = { activity -> openMediationDebugger(activity) }
+        )
+    )
+)
+```
+
+The panel is closed before an action runs. Exceptions are caught and surfaced as a safe in-app error instead of crashing the host app.
 
 ## Runtime Ad Unit Override
 
@@ -210,8 +257,8 @@ internal object AdsDebugBridge {
 - `NORMAL`: use configured app IDs.
 - `FAIL_PRIMARY`: priority placements such as `_2F_id` and `_MF_id` use invalid IDs; normal and AdMob-only IDs stay configured.
 - `FAIL_ALL`: all overridable ad unit requests use an invalid ID.
-- `FORCE_ADMOB_ONLY`: primary requests fail, AdMob-only fallback requests use configured backup IDs.
-- `CUSTOM`: each placement can be set to `Release`, `Debug`, or `False` from the Ad Units tab.
+- `FORCE_ADMOB_ONLY`: AdMob keeps its legacy AdMob-only behavior; MAX maps 2F/MF placements to their base resource ID.
+- `CUSTOM`: each placement can be set to `Release`, `Debug`/`Test`, `False`, or `AdMob`/`Fallback` from the Ad Units tab.
 
 `ads_app_id` and app IDs in the `ca-app-pub-xxx~yyy` format are treated as read-only and are not overridden.
 
@@ -264,6 +311,7 @@ Supported ad events:
 - `click`
 - `impression`
 - `populate`
+- `expired`
 - `fallback`
 - `paid`
 
@@ -429,7 +477,11 @@ AdsDebugKit.initialize(
         captureTimberLogs = true,
         mirrorTimberLogsToLogcat = true,
         invalidAdUnitId = "ca-app-pub-3940256099942544/0000000000",
-        backgroundDrawableResId = R.drawable.ads_debug_background
+        backgroundDrawableResId = R.drawable.ads_debug_background,
+        allowAdUnitOverrides = true,
+        toolActions = emptyList(),
+        mediationProvider = AdMediationProvider.ADMOB,
+        forceDebugEnabled = false
     )
 )
 ```
@@ -460,7 +512,9 @@ Main entry points:
 - `AdsDebugKit.resolveAdUnitId(...)`
 - `DebugComboGestureHelper`
 - `AdDebugConfig`
+- `AdMediationProvider`
 - `AdDebugAdUnit`
+- `AdDebugToolAction`
 - `AdDebugUnit`
 - `AdIdRequestRole`
 - `AdsDebugLogFormat`
@@ -511,14 +565,14 @@ Then open Central Portal deployments, inspect validation, and publish the deploy
 After Central Portal shows `PUBLISHED`, tag the same commit and create a GitHub Release:
 
 ```bash
-git tag -a v0.1.0 -m "Release v0.1.0"
-git push origin v0.1.0
-gh release create v0.1.0 \
-  --title "AndroidAdsDebugKit v0.1.0" \
-  --notes "Initial public release."
+git tag -a v0.2.1 -m "Release v0.2.1"
+git push origin v0.2.1
+gh release create v0.2.1 \
+  --title "AndroidAdsDebugKit v0.2.1" \
+  --notes "Provider-aware AdMob/MAX overrides and custom fallback modes."
 ```
 
-Do not republish an existing version. If the library changes after `0.1.0`, bump the version, for example to `0.1.1`.
+Do not republish an existing version. Bump the version for every subsequent release.
 
 ## License
 

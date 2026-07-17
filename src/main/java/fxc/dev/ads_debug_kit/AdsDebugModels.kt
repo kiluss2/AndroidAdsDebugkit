@@ -1,5 +1,7 @@
 package fxc.dev.ads_debug_kit
 
+import android.app.Activity
+
 enum class AdDebugUnit {
     APP_ID,
     NATIVE,
@@ -8,6 +10,15 @@ enum class AdDebugUnit {
     APP_OPEN,
     BANNER,
     OTHER
+}
+
+/**
+ * Identifies the mediation stack so DebugKit can resolve provider-specific test IDs without
+ * coupling the host app to AdMob semantics. Keep AdMob as the default for existing consumers.
+ */
+enum class AdMediationProvider {
+    ADMOB,
+    APPLOVIN_MAX
 }
 
 enum class AdDebugAction {
@@ -22,7 +33,8 @@ enum class AdDebugAction {
     IMPRESSION,
     POPULATE,
     FALLBACK,
-    DEBUG
+    DEBUG,
+    EXPIRED
 }
 
 enum class AdDebugLoadState {
@@ -66,6 +78,13 @@ data class AdDebugAdUnit(
     val resourceId: Int = 0
 )
 
+data class AdDebugToolAction(
+    val id: String,
+    val title: String,
+    val description: String? = null,
+    val action: (Activity) -> Unit
+)
+
 data class AdDebugConfig(
     val allAdUnits: () -> List<AdDebugAdUnit> = { emptyList() },
     val autoDiscoverAdUnits: Boolean = true,
@@ -88,7 +107,11 @@ data class AdDebugConfig(
         AdsDebugLogFormat.Tag.LIFECYCLE
     ),
     val invalidAdUnitId: String = "ca-app-pub-3940256099942544/0000000000",
-    val backgroundDrawableResId: Int = R.drawable.ads_debug_background
+    val backgroundDrawableResId: Int = R.drawable.ads_debug_background,
+    val allowAdUnitOverrides: Boolean = true,
+    val toolActions: List<AdDebugToolAction> = emptyList(),
+    val mediationProvider: AdMediationProvider = AdMediationProvider.ADMOB,
+    val forceDebugEnabled: Boolean = false
 )
 
 data class AdDebugSettings(

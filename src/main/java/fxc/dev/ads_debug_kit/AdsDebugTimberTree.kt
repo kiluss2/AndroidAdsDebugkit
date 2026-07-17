@@ -50,6 +50,10 @@ internal object AdsDebugTimberTree {
         val unit = values["unit"]?.toDebugUnit() ?: tag.toDebugUnit()
         val action = event.toDebugAction() ?: return null
         val placement = values["placement"] ?: values["adUnit"] ?: tag ?: DEFAULT_TAG
+        val eventMessage = listOfNotNull(
+            values[AdsDebugLogFormat.Key.CODE]?.let { "code=$it" },
+            values[AdsDebugLogFormat.Key.MESSAGE] ?: values[AdsDebugLogFormat.Key.REASON],
+        ).joinToString(separator = " ").ifBlank { null }
         return AdDebugEvent(
             unit = unit,
             action = action,
@@ -57,7 +61,7 @@ internal object AdsDebugTimberTree {
             adUnitId = values["adUnit"],
             network = values["network"],
             lineItem = values["lineItem"],
-            message = values["message"] ?: values["reason"] ?: values["code"]
+            message = eventMessage,
         )
     }
 
@@ -116,6 +120,7 @@ internal object AdsDebugTimberTree {
             AdsDebugLogFormat.Event.IMPRESSION -> AdDebugAction.IMPRESSION
             AdsDebugLogFormat.Event.POPULATE,
             "populate_native" -> AdDebugAction.POPULATE
+            AdsDebugLogFormat.Event.EXPIRED -> AdDebugAction.EXPIRED
             AdsDebugLogFormat.Event.FALLBACK,
             "retry_admob_only" -> AdDebugAction.FALLBACK
             else -> null

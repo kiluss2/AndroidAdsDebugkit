@@ -1,5 +1,6 @@
 package fxc.dev.ads_debug_kit
 
+import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -21,6 +22,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -49,6 +51,7 @@ internal class AdsDebugPanelView(
     private var backgroundImageView: ImageView? = null
     private var selectedTab = Tab.STATES
     private var isRenderPending = false
+    private var isToolActionRunning = false
 
     init {
         orientation = VERTICAL
@@ -174,6 +177,7 @@ internal class AdsDebugPanelView(
             Tab.AD_UNITS -> renderAdUnits()
             Tab.LOGS -> renderLogs()
             Tab.CUSTOM -> renderCustomEvents()
+            Tab.TOOLS -> renderTools()
         }
     }
 
@@ -185,7 +189,7 @@ internal class AdsDebugPanelView(
 
     private fun renderTabs() {
         tabBar.removeAllViews()
-        Tab.entries.forEach { tab ->
+        availableTabs().forEach { tab ->
             val selected = tab == selectedTab
             tabBar.addView(
                 TextView(context).apply {
@@ -272,16 +276,18 @@ internal class AdsDebugPanelView(
         addButton("Edit keep events") {
             showKeepEventsEditor()
         }
-        addAdIdOverrideCard()
-        addButton("Cycle mode") {
-            val nextMode = when (AdsDebugKit.settings.adIdOverrideMode) {
-                AdIdOverrideMode.NORMAL -> AdIdOverrideMode.FAIL_PRIMARY
-                AdIdOverrideMode.FAIL_PRIMARY -> AdIdOverrideMode.FAIL_ALL
-                AdIdOverrideMode.FAIL_ALL -> AdIdOverrideMode.FORCE_ADMOB_ONLY
-                AdIdOverrideMode.FORCE_ADMOB_ONLY -> AdIdOverrideMode.CUSTOM
-                AdIdOverrideMode.CUSTOM -> AdIdOverrideMode.NORMAL
+        if (AdsDebugKit.currentConfig().allowAdUnitOverrides) {
+            addAdIdOverrideCard()
+            addButton("Cycle mode") {
+                val nextMode = when (AdsDebugKit.settings.adIdOverrideMode) {
+                    AdIdOverrideMode.NORMAL -> AdIdOverrideMode.FAIL_PRIMARY
+                    AdIdOverrideMode.FAIL_PRIMARY -> AdIdOverrideMode.FAIL_ALL
+                    AdIdOverrideMode.FAIL_ALL -> AdIdOverrideMode.FORCE_ADMOB_ONLY
+                    AdIdOverrideMode.FORCE_ADMOB_ONLY -> AdIdOverrideMode.CUSTOM
+                    AdIdOverrideMode.CUSTOM -> AdIdOverrideMode.NORMAL
+                }
+                AdsDebugKit.settings = AdsDebugKit.settings.copy(adIdOverrideMode = nextMode)
             }
-            AdsDebugKit.settings = AdsDebugKit.settings.copy(adIdOverrideMode = nextMode)
         }
         addButton("Clear events") {
             AdsDebugKit.clear()
@@ -318,6 +324,32 @@ internal class AdsDebugPanelView(
         events.forEach(::addCustomEventCard)
     }
 
+    private fun renderTools() {
+        val toolActions = AdsDebugKit.currentConfig().toolActions
+        addSectionTitle("Tools (${toolActions.size})")
+        toolActions.forEach { toolAction ->
+            toolAction.description?.takeIf { it.isNotBlank() }?.let { description ->
+                addCard(toolAction.title, listOf(description))
+            }
+            addButton(toolAction.title) {
+                if (isToolActionRunning) return@addButton
+                val activity = context as? Activity
+                if (activity == null) {
+                    Toast.makeText(context, "Tool requires an Activity", Toast.LENGTH_SHORT).show()
+                } else {
+                    isToolActionRunning = true
+                    AdsDebugKit.executeToolAction(activity, toolAction, onClose)
+                }
+            }
+        }
+    }
+
+    private fun availableTabs(): List<Tab> {
+        return Tab.entries.filter { tab ->
+            tab != Tab.TOOLS || AdsDebugKit.currentConfig().toolActions.isNotEmpty()
+        }
+    }
+
     private fun showKeepEventsEditor() {
         val input = android.widget.EditText(context).apply {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
@@ -338,6 +370,7 @@ internal class AdsDebugPanelView(
     }
 
     private fun showAdIdOverrideInfo() {
+        val isMax = AdsDebugKit.currentConfig().mediationProvider == AdMediationProvider.APPLOVIN_MAX
         var okButton: TextView? = null
         val dialog = AlertDialog.Builder(context)
             .setView(
@@ -355,14 +388,25 @@ internal class AdsDebugPanelView(
                     )
                     addView(
                         TextView(context).apply {
-                            text = listOf(
-                                "NORMAL: use app configured IDs.",
-                                "FAIL_PRIMARY: only 2F/MF priority placements use invalid ID; normal and AdMob-only IDs stay configured.",
-                                "FAIL_ALL: all requests use invalid ID.",
-                                "FORCE_ADMOB_ONLY: every non-AdMob-only placement uses invalid ID; only *_admob_only_id stays configured.",
-                                "CUSTOM: Ad Units tab shows Release / Debug / False buttons per placement.",
-                                "Custom Release uses the app configured ID. Debug uses Google test ID by ad format. False uses /0000000000."
-                            ).joinToString("\n\n")
+                            text = if (isMax) {
+                                listOf(
+                                    "NORMAL: use MAX IDs from app resources.",
+                                    "FAIL_PRIMARY: 2F/MF priority placements use an invalid MAX ID.",
+                                    "FAIL_ALL: all requests use an invalid MAX ID.",
+                                    "FORCE_FALLBACK: 2F/MF placements use their base/AP resource ID.",
+                                    "CUSTOM: Ad Units shows Release / Test / False / Fallback per placement.",
+                                    "MAX Test keeps the configured ID; MAX Test Mode controls test delivery. Restart after changing debug or IDs."
+                                ).joinToString("\n\n")
+                            } else {
+                                listOf(
+                                    "NORMAL: use app configured IDs.",
+                                    "FAIL_PRIMARY: only 2F/MF priority placements use invalid ID; normal and AdMob-only IDs stay configured.",
+                                    "FAIL_ALL: all requests use invalid ID.",
+                                    "FORCE_ADMOB_ONLY: every non-AdMob-only placement uses invalid ID; only *_admob_only_id stays configured.",
+                                    "CUSTOM: Ad Units tab shows Release / Debug / False buttons per placement.",
+                                    "Custom Release uses the app configured ID. Debug uses Google test ID by ad format. False uses /0000000000."
+                                ).joinToString("\n\n")
+                            }
                             setTextColor(COLOR_TEXT_SECONDARY)
                             textSize = 14f
                             setPadding(0, dp(14), 0, dp(10))
@@ -508,6 +552,7 @@ internal class AdsDebugPanelView(
     }
 
     private fun addAdIdOverrideCard() {
+        val isMax = AdsDebugKit.currentConfig().mediationProvider == AdMediationProvider.APPLOVIN_MAX
         val card = LinearLayout(context).apply {
             orientation = VERTICAL
             setBackgroundColor(COLOR_CARD)
@@ -543,8 +588,13 @@ internal class AdsDebugPanelView(
             }
         )
         listOf(
+            "provider=${AdsDebugKit.currentConfig().mediationProvider}",
             "mode=${AdsDebugKit.settings.adIdOverrideMode}",
-            "Cycle: normal/fail-primary/fail-all/force-admob-only/custom."
+            if (isMax) {
+                "Cycle: normal/fail-primary/fail-all/force-fallback/custom."
+            } else {
+                "Cycle: normal/fail-primary/fail-all/force-admob-only/custom."
+            }
         ).forEach { line ->
             card.addView(
                 TextView(context).apply {
@@ -564,6 +614,7 @@ internal class AdsDebugPanelView(
     }
 
     private fun addAdUnitCard(adUnit: AdDebugAdUnit) {
+        val allowAdUnitOverrides = AdsDebugKit.currentConfig().allowAdUnitOverrides
         val selectedMode = AdsDebugKit.displayModeFor(adUnit)
         val resolvedAdUnitId = AdsDebugKit.resolvedAdUnitIdForDisplay(adUnit)
         val card = LinearLayout(context).apply {
@@ -586,6 +637,8 @@ internal class AdsDebugPanelView(
             "adUnit=$resolvedAdUnitId",
             if (adUnit.unit == AdDebugUnit.APP_ID) {
                 "readOnly=manifest_app_id"
+            } else if (!allowAdUnitOverrides) {
+                "readOnly=ad_unit_overrides_disabled"
             } else {
                 "appliedMode=$selectedMode"
             }
@@ -599,7 +652,7 @@ internal class AdsDebugPanelView(
                 }
             )
         }
-        if (adUnit.unit != AdDebugUnit.APP_ID) {
+        if (allowAdUnitOverrides && adUnit.unit != AdDebugUnit.APP_ID) {
             card.addView(adUnitOverrideButtons(adUnit, selectedMode))
         }
         content.addView(
@@ -611,13 +664,20 @@ internal class AdsDebugPanelView(
     }
 
     private fun adUnitOverrideButtons(adUnit: AdDebugAdUnit, selectedMode: AdUnitCustomMode): LinearLayout {
+        val debugLabel = if (
+            AdsDebugKit.currentConfig().mediationProvider == AdMediationProvider.APPLOVIN_MAX
+        ) "Test" else "Debug"
+        val fallbackLabel = if (
+            AdsDebugKit.currentConfig().mediationProvider == AdMediationProvider.APPLOVIN_MAX
+        ) "Fallback" else "AdMob"
         return LinearLayout(context).apply {
             orientation = HORIZONTAL
             gravity = Gravity.START
             setPadding(0, dp(8), 0, 0)
             addOverrideModeButton("Release", adUnit, AdUnitCustomMode.RELEASE, selectedMode)
-            addOverrideModeButton("Debug", adUnit, AdUnitCustomMode.DEBUG, selectedMode)
+            addOverrideModeButton(debugLabel, adUnit, AdUnitCustomMode.DEBUG, selectedMode)
             addOverrideModeButton("False", adUnit, AdUnitCustomMode.FALSE, selectedMode)
+            addOverrideModeButton(fallbackLabel, adUnit, AdUnitCustomMode.ADMOB_ONLY, selectedMode)
         }
     }
 
@@ -957,6 +1017,7 @@ internal class AdsDebugPanelView(
         EVENTS("Ad Events"),
         LOGS("Externals"),
         CUSTOM("Custom"),
+        TOOLS("Tools"),
         SETTINGS("Settings"),
         AD_UNITS("Ad Units")
     }

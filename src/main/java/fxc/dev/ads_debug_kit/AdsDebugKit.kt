@@ -1,6 +1,7 @@
 package fxc.dev.ads_debug_kit
 
 import android.app.Application
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Handler
@@ -46,7 +47,11 @@ object AdsDebugKit {
         appContext = context.applicationContext
         prefs = AdsDebugPrefs(appContext)
         this.config = config
-        settingsCache = prefs.settings
+        val storedSettings = prefs.settings
+        settingsCache = storedSettings.normalizedFor(config)
+        if (settingsCache != storedSettings) {
+            prefs.settings = settingsCache
+        }
         discoveredAdUnits = AdUnitResourceDiscoverer.discover(appContext, config)
         rebuildAdUnitCache(discoverIfMissing = false)
         (appContext as? Application)?.let { AdsDebugWindowManager.initialize(it) }
@@ -58,17 +63,42 @@ object AdsDebugKit {
 
     fun isInitialized(): Boolean = ::appContext.isInitialized
 
-    fun isDebugEnabled(): Boolean = isInitialized() && settings.debugEnabled
+    fun isDebugEnabled(): Boolean = isInitialized() && settingsCache.isEffectivelyDebugEnabled()
 
     var settings: AdDebugSettings
-        get() = if (::prefs.isInitialized) settingsCache else AdDebugSettings()
+        get() = if (::prefs.isInitialized) {
+            settingsCache.copy(debugEnabled = settingsCache.isEffectivelyDebugEnabled())
+        } else {
+            AdDebugSettings()
+        }
         set(value) {
             ensureInitialized()
             val previousSettings = settingsCache
-            settingsCache = value
-            prefs.settings = value
-            if (previousSettings.debugEnabled != value.debugEnabled) {
-                configureDebugServices(value.debugEnabled)
+            val normalizedValue = value
+                .normalizedFor(config)
+                .let { requestedSettings ->
+                    if (config.forceDebugEnabled) {
+                        requestedSettings.copy(debugEnabled = previousSettings.debugEnabled)
+                    } else {
+                        requestedSettings
+                    }
+                }
+            settingsCache = normalizedValue
+            prefs.settings = normalizedValue
+            val wasDebugEnabled = previousSettings.isEffectivelyDebugEnabled()
+            val isDebugEnabled = normalizedValue.isEffectivelyDebugEnabled()
+            if (wasDebugEnabled != isDebugEnabled) {
+                configureDebugServices(isDebugEnabled)
+            }
+            if (
+                config.mediationProvider == AdMediationProvider.APPLOVIN_MAX &&
+                (
+                    wasDebugEnabled != isDebugEnabled ||
+                        previousSettings.adIdOverrideMode != normalizedValue.adIdOverrideMode ||
+                        previousSettings.customAdUnitModes != normalizedValue.customAdUnitModes
+                    )
+            ) {
+                showToast("Restart app to apply MAX and tracking debug settings")
             }
             notifyChanged()
         }
@@ -188,11 +218,11 @@ object AdsDebugKit {
         role: AdIdRequestRole = AdIdRequestRole.PRIMARY
     ): String {
         if (!isInitialized()) return primaryAdUnitId
+        if (!config.allowAdUnitOverrides) {
+            return configuredAdUnitId(primaryAdUnitId, admobOnlyAdUnitId, role)
+        }
         if (!settings.debugEnabled) {
-            return when (role) {
-                AdIdRequestRole.PRIMARY -> primaryAdUnitId
-                AdIdRequestRole.ADMOB_ONLY -> admobOnlyAdUnitId ?: primaryAdUnitId
-            }
+            return configuredAdUnitId(primaryAdUnitId, admobOnlyAdUnitId, role)
         }
         if (!isOverridablePlacement(placement) || primaryAdUnitId.isAppIdValue()) return primaryAdUnitId
         val resolved = when (settings.adIdOverrideMode) {
@@ -211,10 +241,16 @@ object AdsDebugKit {
             }
 
             AdIdOverrideMode.FAIL_ALL -> invalidAdUnitIdFor(primaryAdUnitId, placement)
-            AdIdOverrideMode.FORCE_ADMOB_ONLY -> when {
-                placement.isAdmobOnlyPlacement() -> primaryAdUnitId
-                role == AdIdRequestRole.ADMOB_ONLY -> admobOnlyAdUnitId ?: primaryAdUnitId
-                else -> invalidAdUnitIdFor(primaryAdUnitId, placement)
+            AdIdOverrideMode.FORCE_ADMOB_ONLY -> when (config.mediationProvider) {
+                AdMediationProvider.ADMOB -> when {
+                    placement.isAdmobOnlyPlacement() -> primaryAdUnitId
+                    role == AdIdRequestRole.ADMOB_ONLY -> admobOnlyAdUnitId ?: primaryAdUnitId
+                    else -> invalidAdUnitIdFor(primaryAdUnitId, placement)
+                }
+                AdMediationProvider.APPLOVIN_MAX -> fallbackAdUnitIdFor(
+                    placement = placement,
+                    primaryAdUnitId = primaryAdUnitId,
+                )
             }
             AdIdOverrideMode.CUSTOM -> resolveCustomAdUnitId(
                 placement = placement,
@@ -234,6 +270,7 @@ object AdsDebugKit {
 
     fun setCustomAdUnitMode(placement: String, mode: AdUnitCustomMode) {
         ensureInitialized()
+        if (!config.allowAdUnitOverrides) return
         if (!isOverridablePlacement(placement)) {
             logAdIdDebugEvent(
                 placement = placement,
@@ -263,10 +300,12 @@ object AdsDebugKit {
     }
 
     fun customAdUnitMode(placement: String): AdUnitCustomMode {
+        if (!config.allowAdUnitOverrides) return AdUnitCustomMode.RELEASE
         return settings.customAdUnitModes[placement] ?: AdUnitCustomMode.RELEASE
     }
 
     internal fun resolvedAdUnitIdForDisplay(adUnit: AdDebugAdUnit): String {
+        if (!config.allowAdUnitOverrides) return adUnit.adUnitId
         if (!adUnit.isOverridable()) return adUnit.adUnitId
         return when (settings.adIdOverrideMode) {
             AdIdOverrideMode.NORMAL -> adUnit.adUnitId
@@ -276,21 +315,28 @@ object AdsDebugKit {
                 adUnit.adUnitId
             }
             AdIdOverrideMode.FAIL_ALL -> invalidAdUnitIdFor(adUnit)
-            AdIdOverrideMode.FORCE_ADMOB_ONLY -> if (adUnit.name.isAdmobOnlyPlacement()) {
-                adUnit.adUnitId
-            } else {
-                invalidAdUnitIdFor(adUnit)
+            AdIdOverrideMode.FORCE_ADMOB_ONLY -> when (config.mediationProvider) {
+                AdMediationProvider.ADMOB -> if (adUnit.name.isAdmobOnlyPlacement()) {
+                    adUnit.adUnitId
+                } else {
+                    invalidAdUnitIdFor(adUnit)
+                }
+                AdMediationProvider.APPLOVIN_MAX -> fallbackAdUnitIdFor(
+                    placement = adUnit.name,
+                    primaryAdUnitId = adUnit.adUnitId,
+                )
             }
             AdIdOverrideMode.CUSTOM -> when (customAdUnitMode(adUnit.name)) {
                 AdUnitCustomMode.RELEASE -> adUnit.adUnitId
-                AdUnitCustomMode.DEBUG -> debugAdUnitIdFor(adUnit)
+                AdUnitCustomMode.DEBUG -> debugAdUnitIdFor(adUnit, adUnit.adUnitId)
                 AdUnitCustomMode.FALSE -> invalidAdUnitIdFor(adUnit)
-                AdUnitCustomMode.ADMOB_ONLY -> admobOnlyDisplayIdFor(adUnit)
+                AdUnitCustomMode.ADMOB_ONLY -> providerFallbackDisplayIdFor(adUnit)
             }
         }
     }
 
     internal fun displayModeFor(adUnit: AdDebugAdUnit): AdUnitCustomMode {
+        if (!config.allowAdUnitOverrides) return AdUnitCustomMode.RELEASE
         return displayModeFor(adUnit, settings.adIdOverrideMode)
     }
 
@@ -305,10 +351,17 @@ object AdsDebugKit {
             }
             AdIdOverrideMode.FAIL_ALL -> AdUnitCustomMode.FALSE
             AdIdOverrideMode.CUSTOM -> customAdUnitMode(adUnit.name)
-            AdIdOverrideMode.FORCE_ADMOB_ONLY -> if (adUnit.name.isAdmobOnlyPlacement()) {
-                AdUnitCustomMode.RELEASE
-            } else {
-                AdUnitCustomMode.FALSE
+            AdIdOverrideMode.FORCE_ADMOB_ONLY -> when (config.mediationProvider) {
+                AdMediationProvider.ADMOB -> if (adUnit.name.isAdmobOnlyPlacement()) {
+                    AdUnitCustomMode.RELEASE
+                } else {
+                    AdUnitCustomMode.FALSE
+                }
+                AdMediationProvider.APPLOVIN_MAX -> if (adUnit.hasFallbackAdUnit()) {
+                    AdUnitCustomMode.ADMOB_ONLY
+                } else {
+                    AdUnitCustomMode.RELEASE
+                }
             }
         }
     }
@@ -326,6 +379,23 @@ object AdsDebugKit {
     fun toggle() {
         ensureInitialized()
         AdsDebugWindowManager.toggle()
+    }
+
+    internal fun executeToolAction(
+        activity: Activity,
+        toolAction: AdDebugToolAction,
+        closePanel: () -> Unit
+    ) {
+        val closeResult = runCatching(closePanel).onFailure { error ->
+            logToolFailure(toolAction, error)
+        }
+        if (closeResult.isFailure) return
+
+        mainHandler.postDelayed({
+            runCatching { toolAction.action(activity) }.onFailure { error ->
+                logToolFailure(toolAction, error)
+            }
+        }, TOOL_ACTION_DELAY_MILLIS)
     }
 
     internal fun startFallbackActivity() {
@@ -361,6 +431,14 @@ object AdsDebugKit {
         }
     }
 
+    private fun debugAdUnitIdFor(adUnit: AdDebugAdUnit?, configuredAdUnitId: String): String {
+        return when (config.mediationProvider) {
+            AdMediationProvider.ADMOB -> debugAdUnitIdFor(adUnit?.unit ?: AdDebugUnit.OTHER)
+            // MAX has no reusable sample ad-unit IDs. Its Test Mode uses the configured unit.
+            AdMediationProvider.APPLOVIN_MAX -> configuredAdUnitId
+        }
+    }
+
     private fun resolveCustomAdUnitId(
         placement: String,
         primaryAdUnitId: String,
@@ -379,14 +457,31 @@ object AdsDebugKit {
                 if (adUnit?.unit == AdDebugUnit.APP_ID || primaryAdUnitId.isAppIdValue()) {
                     adUnit?.adUnitId ?: primaryAdUnitId
                 } else {
-                    debugAdUnitIdFor(adUnit?.unit ?: AdDebugUnit.OTHER)
+                    debugAdUnitIdFor(adUnit, primaryAdUnitId)
                 }
             }
 
             AdUnitCustomMode.FALSE -> invalidAdUnitIdFor(primaryAdUnitId, placement)
-            AdUnitCustomMode.ADMOB_ONLY -> admobOnlyAdUnitId
-                ?: adUnit?.let { admobOnlyDisplayIdFor(it) }
-                ?: primaryAdUnitId
+            AdUnitCustomMode.ADMOB_ONLY -> when (config.mediationProvider) {
+                AdMediationProvider.ADMOB -> admobOnlyAdUnitId
+                    ?: adUnit?.let { admobOnlyDisplayIdFor(it) }
+                    ?: primaryAdUnitId
+                AdMediationProvider.APPLOVIN_MAX -> fallbackAdUnitIdFor(
+                    placement = placement,
+                    primaryAdUnitId = primaryAdUnitId,
+                )
+            }
+        }
+    }
+
+    private fun configuredAdUnitId(
+        primaryAdUnitId: String,
+        admobOnlyAdUnitId: String?,
+        role: AdIdRequestRole
+    ): String {
+        return when (role) {
+            AdIdRequestRole.PRIMARY -> primaryAdUnitId
+            AdIdRequestRole.ADMOB_ONLY -> admobOnlyAdUnitId ?: primaryAdUnitId
         }
     }
 
@@ -410,7 +505,8 @@ object AdsDebugKit {
             units = units,
             byPlacement = units.associateBy { it.name },
             byAdUnitId = byAdUnitId,
-            admobOnlyByPlacement = units.associateWithAdmobOnlyPlacement()
+            admobOnlyByPlacement = units.associateWithAdmobOnlyPlacement(),
+            fallbackByPlacement = units.associateWithFallbackPlacement(),
         )
         isAdUnitCacheInitialized = true
     }
@@ -423,14 +519,6 @@ object AdsDebugKit {
             }
     }
 
-    private fun debugAdUnitIdFor(adUnit: AdDebugAdUnit): String {
-        return if (adUnit.unit == AdDebugUnit.APP_ID) {
-            adUnit.adUnitId
-        } else {
-            debugAdUnitIdFor(adUnit.unit)
-        }
-    }
-
     private fun invalidAdUnitIdFor(adUnit: AdDebugAdUnit): String {
         return invalidAdUnitIdFor(adUnit.adUnitId, adUnit.name)
     }
@@ -440,11 +528,18 @@ object AdsDebugKit {
         if (cachedAdUnit?.unit == AdDebugUnit.APP_ID || primaryAdUnitId.isAppIdValue()) {
             return primaryAdUnitId
         }
-        return config.invalidAdUnitId
+        return when (config.mediationProvider) {
+            AdMediationProvider.ADMOB -> config.invalidAdUnitId
+            AdMediationProvider.APPLOVIN_MAX -> {
+                val configuredInvalidId = config.invalidAdUnitId
+                    .takeUnless { it == DEFAULT_ADMOB_INVALID_AD_UNIT_ID }
+                configuredInvalidId ?: maxInvalidAdUnitIdFor(placement)
+            }
+        }
     }
 
     private fun AdDebugAdUnit.isOverridable(): Boolean {
-        return unit != AdDebugUnit.APP_ID
+        return config.allowAdUnitOverrides && unit != AdDebugUnit.APP_ID
     }
 
     private fun isOverridablePlacement(placement: String): Boolean {
@@ -463,6 +558,28 @@ object AdsDebugKit {
         return adUnitCache.admobOnlyByPlacement[adUnit.name]?.adUnitId ?: adUnit.adUnitId
     }
 
+    private fun providerFallbackDisplayIdFor(adUnit: AdDebugAdUnit): String {
+        return when (config.mediationProvider) {
+            AdMediationProvider.ADMOB -> admobOnlyDisplayIdFor(adUnit)
+            AdMediationProvider.APPLOVIN_MAX -> fallbackAdUnitIdFor(adUnit.name, adUnit.adUnitId)
+        }
+    }
+
+    private fun fallbackAdUnitIdFor(placement: String, primaryAdUnitId: String): String {
+        return adUnitCache.fallbackByPlacement[placement]?.adUnitId ?: primaryAdUnitId
+    }
+
+    private fun AdDebugAdUnit.hasFallbackAdUnit(): Boolean {
+        return adUnitCache.fallbackByPlacement[name]
+            ?.adUnitId
+            ?.let { fallbackId -> fallbackId != adUnitId } == true
+    }
+
+    private fun maxInvalidAdUnitIdFor(placement: String): String {
+        val placementHash = placement.hashCode().toUInt().toString(16).padStart(8, '0')
+        return MAX_INVALID_AD_UNIT_PREFIX + placementHash
+    }
+
     private fun List<AdDebugAdUnit>.associateWithAdmobOnlyPlacement(): Map<String, AdDebugAdUnit> {
         val byPlacement = associateBy { it.name }
         return buildMap {
@@ -475,9 +592,32 @@ object AdsDebugKit {
         }
     }
 
+    private fun List<AdDebugAdUnit>.associateWithFallbackPlacement(): Map<String, AdDebugAdUnit> {
+        val byPlacement = associateBy { it.name }
+        return buildMap {
+            this@associateWithFallbackPlacement.forEach { adUnit ->
+                val fallbackPlacement = adUnit.name.fallbackPeerPlacement() ?: return@forEach
+                byPlacement[fallbackPlacement]?.let { fallbackAdUnit ->
+                    put(adUnit.name, fallbackAdUnit)
+                }
+            }
+        }
+    }
+
     private fun String.admobOnlyPeerPlacement(): String? {
         if (isAdmobOnlyPlacement() || !endsWith(config.adUnitResourceSuffix)) return null
         return removeSuffix(config.adUnitResourceSuffix) + "_admob_only" + config.adUnitResourceSuffix
+    }
+
+    private fun String.fallbackPeerPlacement(): String? {
+        if (!endsWith(config.adUnitResourceSuffix)) return null
+        val baseName = removeSuffix(config.adUnitResourceSuffix)
+        val fallbackBase = when {
+            baseName.endsWith("_2f", ignoreCase = true) -> baseName.dropLast(3)
+            baseName.endsWith("_mf", ignoreCase = true) -> baseName.dropLast(3)
+            else -> return null
+        }
+        return fallbackBase + config.adUnitResourceSuffix
     }
 
     private fun String.isAdmobOnlyPlacement(): Boolean {
@@ -503,6 +643,33 @@ object AdsDebugKit {
         mainHandler.post {
             Toast.makeText(appContext, message, Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun logToolFailure(toolAction: AdDebugToolAction, error: Throwable) {
+        val message = buildString {
+            append("Tool action ")
+            append(toolAction.id)
+            append(" failed: ")
+            append(error::class.java.simpleName)
+            error.message?.takeIf { it.isNotBlank() }?.let {
+                append(" - ")
+                append(it)
+            }
+        }
+        logDebugLine(message)
+        showToast("${toolAction.title} failed")
+    }
+
+    private fun AdDebugSettings.normalizedFor(config: AdDebugConfig): AdDebugSettings {
+        if (config.allowAdUnitOverrides) return this
+        return copy(
+            adIdOverrideMode = AdIdOverrideMode.NORMAL,
+            customAdUnitModes = emptyMap()
+        )
+    }
+
+    private fun AdDebugSettings.isEffectivelyDebugEnabled(): Boolean {
+        return config.forceDebugEnabled || debugEnabled
     }
 
     private fun configureDebugServices(enabled: Boolean) {
@@ -543,6 +710,7 @@ object AdsDebugKit {
             AdDebugAction.LOAD_START -> AdDebugLoadState.LOADING
             AdDebugAction.LOAD_SUCCESS -> AdDebugLoadState.SUCCESS
             AdDebugAction.LOAD_FAIL -> AdDebugLoadState.FAILED
+            AdDebugAction.EXPIRED -> AdDebugLoadState.NOT_LOADED
             else -> currentState.loadState
         }
         val showState = when (event.action) {
@@ -662,6 +830,11 @@ object AdsDebugKit {
         val units: List<AdDebugAdUnit> = emptyList(),
         val byPlacement: Map<String, AdDebugAdUnit> = emptyMap(),
         val byAdUnitId: Map<String, AdDebugAdUnit> = emptyMap(),
-        val admobOnlyByPlacement: Map<String, AdDebugAdUnit> = emptyMap()
+        val admobOnlyByPlacement: Map<String, AdDebugAdUnit> = emptyMap(),
+        val fallbackByPlacement: Map<String, AdDebugAdUnit> = emptyMap(),
     )
+
+    private const val TOOL_ACTION_DELAY_MILLIS = 220L
+    private const val DEFAULT_ADMOB_INVALID_AD_UNIT_ID = "ca-app-pub-3940256099942544/0000000000"
+    private const val MAX_INVALID_AD_UNIT_PREFIX = "ffffffff"
 }
