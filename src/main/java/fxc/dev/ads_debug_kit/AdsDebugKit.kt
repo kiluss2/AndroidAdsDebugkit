@@ -11,6 +11,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.CopyOnWriteArraySet
+import java.util.concurrent.atomic.AtomicLong
 
 object AdsDebugKit {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -28,6 +29,7 @@ object AdsDebugKit {
 
     @Volatile
     private var settingsCache = AdDebugSettings()
+    private val requestSettingsRevision = AtomicLong(0L)
     private val lock = Any()
     private val events = mutableListOf<AdDebugEvent>()
     private val revenues = mutableListOf<AdDebugRevenueEvent>()
@@ -47,6 +49,7 @@ object AdsDebugKit {
         appContext = context.applicationContext
         prefs = AdsDebugPrefs(appContext)
         this.config = config
+        requestSettingsRevision.set(0L)
         val storedSettings = prefs.settings
         settingsCache = storedSettings
         discoveredAdUnits = AdUnitResourceDiscoverer.discover(appContext, config)
@@ -65,6 +68,13 @@ object AdsDebugKit {
     fun isInitialized(): Boolean = ::appContext.isInitialized
 
     fun isDebugEnabled(): Boolean = isInitialized() && settingsCache.isEffectivelyDebugEnabled()
+
+    /** Changes whenever request-affecting MAX settings change during the current process. */
+    fun adRequestSettingsRevision(): Long = if (isInitialized()) {
+        requestSettingsRevision.get()
+    } else {
+        0L
+    }
 
     var settings: AdDebugSettings
         get() = if (::prefs.isInitialized) {
@@ -99,6 +109,7 @@ object AdsDebugKit {
                         previousSettings.customAdUnitModes != normalizedValue.customAdUnitModes
                     )
             ) {
+                requestSettingsRevision.incrementAndGet()
                 showToast("Restart app to apply MAX and tracking debug settings")
             }
             notifyChanged()
@@ -261,11 +272,25 @@ object AdsDebugKit {
         placement: String,
         configuredAdUnitId: String,
         role: AdProviderRequestRole = AdProviderRequestRole.PRIMARY,
-    ): String {
-        if (!isInitialized()) return configuredAdUnitId
+    ): String = resolveProviderAdRequest(
+        placement = placement,
+        configuredAdUnitId = configuredAdUnitId,
+        role = role,
+    ).adUnitId
+
+    /**
+     * Resolves both the display ID and request behavior. MAX hosts should use this API so failure
+     * modes are deterministic and never reach MAX as fabricated ad-unit IDs.
+     */
+    fun resolveProviderAdRequest(
+        placement: String,
+        configuredAdUnitId: String,
+        role: AdProviderRequestRole = AdProviderRequestRole.PRIMARY,
+    ): AdDebugRequestResolution {
+        if (!isInitialized()) return AdDebugRequestResolution(configuredAdUnitId)
         val placementMatch = providerOnlyPlacementMatch(placement)
         val adUnit = adUnitCache.byPlacement[placement]
-        val resolved = AdUnitIdOverrideResolver.resolve(
+        val resolved = AdUnitIdOverrideResolver.resolveRequest(
             AdUnitIdResolutionInput(
                 configuredAdUnitId = configuredAdUnitId,
                 invalidAdUnitId = invalidAdUnitIdFor(configuredAdUnitId, placement),
@@ -281,14 +306,15 @@ object AdsDebugKit {
             )
         )
         if (
-            resolved != configuredAdUnitId ||
+            resolved.adUnitId != configuredAdUnitId ||
+            resolved.behavior == AdDebugRequestBehavior.FORCE_FAIL ||
             role == AdProviderRequestRole.PROVIDER_ONLY ||
             placementMatch == ProviderOnlyPlacementMatch.CURRENT_PROVIDER
         ) {
             logAdIdDebugEvent(
                 placement = placement,
                 message = "AdIdResolver mode=${overrideModeLabel(settings.adIdOverrideMode)} " +
-                    "role=$role resolved=$resolved"
+                    "role=$role behavior=${resolved.behavior} resolved=${resolved.adUnitId}"
             )
         }
         return resolved

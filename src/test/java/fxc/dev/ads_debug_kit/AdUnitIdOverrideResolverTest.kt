@@ -116,6 +116,50 @@ class AdUnitIdOverrideResolverTest {
     }
 
     @Test
+    fun `failure modes return force fail behavior instead of relying on invalid ids`() {
+        assertEquals(
+            AdDebugRequestBehavior.FORCE_FAIL,
+            resolveRequest(mode = AdIdOverrideMode.FAIL_ALL).behavior,
+        )
+        assertEquals(
+            AdDebugRequestBehavior.FORCE_FAIL,
+            resolveRequest(
+                mode = AdIdOverrideMode.FAIL_PRIMARY,
+                priority = true,
+            ).behavior,
+        )
+        assertEquals(
+            AdDebugRequestBehavior.FORCE_FAIL,
+            resolveRequest(
+                mode = AdIdOverrideMode.CUSTOM,
+                customMode = AdUnitCustomMode.FALSE,
+            ).behavior,
+        )
+    }
+
+    @Test
+    fun `release debug and provider-only fallback requests remain allowed`() {
+        assertEquals(
+            AdDebugRequestResolution(CONFIGURED_ID),
+            resolveRequest(mode = AdIdOverrideMode.NORMAL),
+        )
+        assertEquals(
+            AdDebugRequestResolution(DEBUG_ID),
+            resolveRequest(
+                mode = AdIdOverrideMode.CUSTOM,
+                customMode = AdUnitCustomMode.DEBUG,
+            ),
+        )
+        assertEquals(
+            AdDebugRequestResolution(CONFIGURED_ID),
+            resolveRequest(
+                mode = AdIdOverrideMode.FORCE_FALLBACK,
+                role = AdProviderRequestRole.PROVIDER_ONLY,
+            ),
+        )
+    }
+
+    @Test
     fun `missing provider only capability removes unsafe fallback modes`() {
         assertEquals(
             AdDebugSettings(),
@@ -219,6 +263,30 @@ class AdUnitIdOverrideResolverTest {
         priority: Boolean = false,
     ): String {
         return AdUnitIdOverrideResolver.resolve(
+            AdUnitIdResolutionInput(
+                configuredAdUnitId = CONFIGURED_ID,
+                invalidAdUnitId = INVALID_ID,
+                debugAdUnitId = DEBUG_ID,
+                overrideMode = mode,
+                customMode = customMode,
+                requestRole = role,
+                providerOnlyPlacementMatch = placementMatch,
+                isPriorityPlacement = priority,
+                overridesEnabled = true,
+                debugEnabled = true,
+                overridable = true,
+            )
+        )
+    }
+
+    private fun resolveRequest(
+        mode: AdIdOverrideMode,
+        customMode: AdUnitCustomMode = AdUnitCustomMode.RELEASE,
+        role: AdProviderRequestRole = AdProviderRequestRole.PRIMARY,
+        placementMatch: ProviderOnlyPlacementMatch = ProviderOnlyPlacementMatch.NONE,
+        priority: Boolean = false,
+    ): AdDebugRequestResolution {
+        return AdUnitIdOverrideResolver.resolveRequest(
             AdUnitIdResolutionInput(
                 configuredAdUnitId = CONFIGURED_ID,
                 invalidAdUnitId = INVALID_ID,

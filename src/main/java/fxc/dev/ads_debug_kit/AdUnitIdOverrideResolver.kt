@@ -22,9 +22,11 @@ internal data class AdUnitIdResolutionInput(
 
 /** Pure resolver kept independent from Android so the provider/fallback matrix is unit-testable. */
 internal object AdUnitIdOverrideResolver {
-    fun resolve(input: AdUnitIdResolutionInput): String {
+    fun resolve(input: AdUnitIdResolutionInput): String = resolveRequest(input).adUnitId
+
+    fun resolveRequest(input: AdUnitIdResolutionInput): AdDebugRequestResolution {
         if (!input.overridesEnabled || !input.debugEnabled || !input.overridable) {
-            return input.configuredAdUnitId
+            return input.allow()
         }
 
         val isProviderOnlyRequest =
@@ -35,32 +37,38 @@ internal object AdUnitIdOverrideResolver {
                     )
 
         return when (input.overrideMode) {
-            AdIdOverrideMode.NORMAL -> input.configuredAdUnitId
+            AdIdOverrideMode.NORMAL -> input.allow()
             AdIdOverrideMode.FAIL_PRIMARY -> if (
                 !isProviderOnlyRequest && input.isPriorityPlacement
             ) {
-                input.invalidAdUnitId
+                input.forceFail()
             } else {
-                input.configuredAdUnitId
+                input.allow()
             }
-            AdIdOverrideMode.FAIL_ALL -> input.invalidAdUnitId
+            AdIdOverrideMode.FAIL_ALL -> input.forceFail()
             AdIdOverrideMode.FORCE_ADMOB_ONLY -> if (isProviderOnlyRequest) {
-                input.configuredAdUnitId
+                input.allow()
             } else {
-                input.invalidAdUnitId
+                input.forceFail()
             }
             AdIdOverrideMode.CUSTOM -> when (input.customMode) {
-                AdUnitCustomMode.RELEASE -> input.configuredAdUnitId
-                AdUnitCustomMode.DEBUG -> input.debugAdUnitId
-                AdUnitCustomMode.FALSE -> input.invalidAdUnitId
+                AdUnitCustomMode.RELEASE -> input.allow()
+                AdUnitCustomMode.DEBUG -> AdDebugRequestResolution(input.debugAdUnitId)
+                AdUnitCustomMode.FALSE -> input.forceFail()
                 AdUnitCustomMode.ADMOB_ONLY -> if (isProviderOnlyRequest) {
-                    input.configuredAdUnitId
+                    input.allow()
                 } else {
-                    input.invalidAdUnitId
+                    input.forceFail()
                 }
             }
         }
     }
+
+    private fun AdUnitIdResolutionInput.allow() =
+        AdDebugRequestResolution(configuredAdUnitId, AdDebugRequestBehavior.ALLOW)
+
+    private fun AdUnitIdResolutionInput.forceFail() =
+        AdDebugRequestResolution(invalidAdUnitId, AdDebugRequestBehavior.FORCE_FAIL)
 }
 
 internal fun providerOnlyProviderFor(

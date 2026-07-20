@@ -33,7 +33,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.github.kiluss2:android-ads-debug-kit:0.2.3")
+    implementation("io.github.kiluss2:android-ads-debug-kit:0.2.4")
 }
 ```
 
@@ -56,7 +56,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.github.kiluss2:android-ads-debug-kit:0.2.3")
+    implementation("io.github.kiluss2:android-ads-debug-kit:0.2.4")
 }
 ```
 
@@ -218,17 +218,23 @@ The panel is closed before an action runs. Exceptions are caught and surfaced as
 
 ### Provider-neutral API
 
-Pass the configured ID for the request currently being made. Primary and provider-only requests are separate calls because the host app owns the fallback flow:
+Pass the configured ID for the request currently being made. Primary and provider-only requests are separate calls because the host app owns the fallback flow. MAX integrations should use the structured resolver and skip the SDK request when `behavior == FORCE_FAIL`:
 
 ```kotlin
-val primaryId = AdsDebugKit.resolveProviderAdUnitId(
+val primaryRequest = AdsDebugKit.resolveProviderAdRequest(
     placement = "ads_interstitial_id",
     configuredAdUnitId = getString(R.string.ads_interstitial_id),
     role = AdProviderRequestRole.PRIMARY
 )
 
+if (primaryRequest.behavior == AdDebugRequestBehavior.FORCE_FAIL) {
+    // Run the host's normal load-failure callback without constructing an SDK ad object.
+} else {
+    loadMaxAd(primaryRequest.adUnitId)
+}
+
 // Call this only from the host app's real primary-failure fallback path.
-val providerOnlyId = AdsDebugKit.resolveProviderAdUnitId(
+val providerOnlyRequest = AdsDebugKit.resolveProviderAdRequest(
     placement = "ads_interstitial_applovin_only_id",
     configuredAdUnitId = getString(R.string.ads_interstitial_applovin_only_id),
     role = AdProviderRequestRole.PROVIDER_ONLY
@@ -282,15 +288,15 @@ internal object AdsDebugBridge {
 }
 ```
 
-For compatibility with `0.1.x`, legacy AdMob `CUSTOM + ADMOB_ONLY` still substitutes the explicitly supplied/discovered AdMob-only ID. New provider-neutral integrations should use `resolveProviderAdUnitId(...)`; its `Fallback` control invalidates the primary so the host app's real fallback callback performs the second request.
+For compatibility with existing consumers, the string-only resolvers remain available. New provider-neutral integrations should use `resolveProviderAdRequest(...)`; its `Fallback` control returns `FORCE_FAIL` for the primary so the host app's real failure callback performs the provider-only request. This avoids relying on fabricated IDs, which some SDK test modes may unexpectedly fill.
 
 ### Override Modes
 
 - `NORMAL`: use configured app IDs.
-- `FAIL_PRIMARY`: priority placements such as `_2F_id` and `_MF_id` use invalid IDs; normal and AdMob-only IDs stay configured.
-- `FAIL_ALL`: all overridable ad unit requests use an invalid ID.
-- `FORCE_FALLBACK`: every primary request uses an invalid ID; only the current provider's provider-only request/resource stays configured. This mode is hidden when no provider-only resource is registered.
-- `CUSTOM`: each placement can be set to `Release`, `Debug`/`Test`, `False`, or `Fallback` when provider-only fallback is available. Custom `Fallback` invalidates the selected primary; it does not replace that request's ID.
+- `FAIL_PRIMARY`: priority placements such as `_2F_id` and `_MF_id` return `FORCE_FAIL`; normal and provider-only requests stay configured.
+- `FAIL_ALL`: all overridable requests return `FORCE_FAIL`.
+- `FORCE_FALLBACK`: every primary request returns `FORCE_FAIL`; only the current provider's provider-only request/resource stays configured. This mode is hidden when no provider-only resource is registered.
+- `CUSTOM`: each placement can be set to `Release`, `Debug`/`Test`, `False`, or `Fallback` when provider-only fallback is available. `False` and primary `Fallback` return `FORCE_FAIL`.
 
 For compatibility, the persisted enum entry remains `FORCE_ADMOB_ONLY` and `AdUnitCustomMode.ADMOB_ONLY`; provider-neutral source aliases `FORCE_FALLBACK` and `FALLBACK` point to those same entries. They are companion aliases rather than new enum entries, so persisted `.name`, `entries`, and `valueOf(...)` continue to use the legacy names.
 
@@ -545,6 +551,8 @@ Main entry points:
 - `AdsDebugKit.setDebugEnabled(...)`
 - `AdsDebugKit.resolveAdUnitId(...)`
 - `AdsDebugKit.resolveProviderAdUnitId(...)`
+- `AdsDebugKit.resolveProviderAdRequest(...)`
+- `AdsDebugKit.adRequestSettingsRevision()`
 - `DebugComboGestureHelper`
 - `AdDebugConfig`
 - `AdMediationProvider`
@@ -553,6 +561,8 @@ Main entry points:
 - `AdDebugUnit`
 - `AdIdRequestRole`
 - `AdProviderRequestRole`
+- `AdDebugRequestBehavior`
+- `AdDebugRequestResolution`
 - `AdsDebugLogFormat`
 
 Implementation details such as the window manager, panel view, logcat tap, and Timber parser are internal.
@@ -601,11 +611,11 @@ Do not retry blindly if the command times out; inspect Central Portal first beca
 After Central Portal shows `PUBLISHED`, tag the same commit and create a GitHub Release:
 
 ```bash
-git tag -a v0.2.3 -m "Release v0.2.3"
-git push origin v0.2.3
-gh release create v0.2.3 \
-  --title "AndroidAdsDebugKit v0.2.3" \
-  --notes "Make AppLovin MAX false-mode IDs deliberately malformed so Test Mode cannot fill them."
+git tag -a v0.2.4 -m "Release v0.2.4"
+git push origin v0.2.4
+gh release create v0.2.4 \
+  --title "AndroidAdsDebugKit v0.2.4" \
+  --notes "Add deterministic FORCE_FAIL request resolution for MAX and a request-settings revision guard."
 ```
 
 Do not republish an existing version. Bump the version for every subsequent release.

@@ -96,6 +96,21 @@ enum class AdProviderRequestRole {
     PROVIDER_ONLY
 }
 
+/**
+ * Describes whether the host should send the resolved request to its mediation SDK. DebugKit uses
+ * [FORCE_FAIL] for deterministic failure scenarios; the host must report the failure through its
+ * normal callback path without constructing or loading an SDK ad object.
+ */
+enum class AdDebugRequestBehavior {
+    ALLOW,
+    FORCE_FAIL
+}
+
+data class AdDebugRequestResolution(
+    val adUnitId: String,
+    val behavior: AdDebugRequestBehavior = AdDebugRequestBehavior.ALLOW,
+)
+
 data class AdDebugAdUnit(
     val name: String,
     val adUnitId: String,
